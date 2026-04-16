@@ -8,18 +8,20 @@ void HAL_UART_Init(UART_HandleTypeDef *huart, uint32_t sys_clk, uint32_t baudrat
 
     huart->State = HAL_UART_STATE_BUSY;
 
-    // Tính divisor cho baudrate
-    uint32_t divisor = sys_clk / baudrate;
+    // 1. Tính bộ chia cho TX (Chạy 1x - mỗi nhịp 1 bit)
+    uint32_t tx_divisor = sys_clk / baudrate;
     
-    // Ghi cho cả RX và TX
-    huart->Instance->CLK_DIV = (divisor << 16) | (divisor & 0xFFFF);
+    // 2. Tính bộ chia cho RX (Chạy 16x - 16 nhịp mới được 1 bit)
+    uint32_t rx_divisor = sys_clk / (baudrate * 16);
+    
+    // 3. Ghi vào thanh ghi: [31:16] là RX_DIV, [15:0] là TX_DIV
+    huart->Instance->CLK_DIV = (rx_divisor << 16) | (tx_divisor & 0xFFFF);
 
     // Bật RX interrupt, tắt TX interrupt và DMA
     huart->Instance->DMA_INT = 0x02;
 
     huart->State = HAL_UART_STATE_READY;
 }
-
 // =========================================================
 // TRUYỀN DỮ LIỆU (POLLING)
 // =========================================================
@@ -62,6 +64,8 @@ void HAL_UART_IRQHandler(UART_HandleTypeDef *huart) {
 // =========================================================
 // TRUYỀN BẰNG DMA (NON-BLOCKING)
 // =========================================================
+
+/*
 void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
     if (huart->State != HAL_UART_STATE_READY) return;
     if (pData == NULL || Size == 0 || dma_ch == NULL) return;
@@ -81,11 +85,15 @@ void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_c
     // Bật TX DMA request
     huart->Instance->DMA_INT |= (1 << 2);
 }
+*/
+
 
 // =========================================================
 // NHẬN BẰNG DMA
 // =========================================================
-void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
+
+
+/*void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
     if (huart->State != HAL_UART_STATE_READY) return;
     if (pData == NULL || Size == 0 || dma_ch == NULL) return;
 
@@ -103,7 +111,7 @@ void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch
 
     // Bật RX DMA request
     huart->Instance->DMA_INT |= (1 << 3);
-}
+}*/
 
 
 __attribute__((weak)) void HAL_UART_RxCallback(UART_HandleTypeDef *huart, uint8_t rx_data) {

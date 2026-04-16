@@ -28,7 +28,6 @@ void syscon_set_boot_address(uint16_t addr_offset) {
 // Chỉ gọi 1 lần duy nhất ở đầu hàm main()
 void syscon_init_clocks(void) {
     uint32_t clock_mask = 0;
-
     // 1. Luôn cấp điện cho các khối Bắt buộc (Mandatory)
     clock_mask |= (1 << SYSCON_CLK_UART);
     clock_mask |= (1 << SYSCON_CLK_DEBUG); // Cần thiết để nạp code qua JTAG/OpenOCD

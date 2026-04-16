@@ -22,9 +22,10 @@ module tb_top_soc();
     wire flash_sck, flash_cs_n;
     wire [3:0] flash_io;
     wire sdram_clk, sdram_cke, sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n;
-    wire [1:0] sdram_ba, sdram_dqm;
+    wire [1:0] sdram_ba;
+    wire [1:0] sdram_dqm; // Sửa lại thành 2 bit cho phù hợp với top_soc (16-bit data)
     wire [12:0] sdram_addr;
-    wire [15:0] sdram_dq;
+    wire [15:0] sdram_dq; // Sửa lại thành 16 bit
 
     // ========================================================
     // Tạo các clock với tần số khác nhau
@@ -41,6 +42,10 @@ module tb_top_soc();
         .clk_core      (clk_400m),
         .clk_axi       (clk_200m),
         .clk_apb       (clk_100m),
+        
+        // FIX WARNING: Đã nối dây clk_sdram_ctrl bị thiếu!
+        .clk_sdram_ctrl(clk_100m), 
+        
         .clk_sdram_ext (clk_200m),
         .uart_clk      (clk_100m),
         .spi_clk       (clk_100m),
@@ -83,39 +88,55 @@ module tb_top_soc();
     );
 
     // ========================================================
-    // Loopback để tự test (không cần phần cứng ngoài)
+    // MÔ HÌNH CHIP SDRAM (NẾU BẠN CÓ FILE CHUẨN THÌ XÓA ĐOẠN NÀY ĐI
+    // VÀ INSTANTIATE FILE ĐÓ VÀO ĐÂY)
     // ========================================================
-    assign uart_rx  = uart_tx;   // nối TX -> RX
-    assign spi_miso = spi_mosi;  // nối MOSI -> MISO
-    pullup(i2c_scl);             // I2C cần pull-up
+    // mt48lc16m16a2 my_sdram_chip (
+    //     .Dq(sdram_dq), .Addr(sdram_addr), .Ba(sdram_ba),
+    //     .Clk(sdram_clk), .Cke(sdram_cke), .Cs_n(sdram_cs_n),
+    //     .Ras_n(sdram_ras_n), .Cas_n(sdram_cas_n), .We_n(sdram_we_n), .Dqm(sdram_dqm)
+    // );
+    
+    // NẾU BẠN KHÔNG CÓ MÔ HÌNH: PHẢI DÙNG LỆNH FORCE ĐỂ ÉP MẠCH CHẠY
+    // Ép cờ báo hoàn thành khởi tạo của Controller lên 1 sau 200us
+    initial begin
+        // Đường dẫn này tùy thuộc vào cách bạn đặt tên bên trong top_soc.v và axi_sdram_controller.v
+        // Thường là: uut.u_axi_sdram.init_done
+        #200000; // Đợi 200us
+        // force uut.u_axi_sdram.init_done = 1'b1; 
+    end
+
+    // ========================================================
+    // Loopback để tự test
+    // ========================================================
+    assign uart_rx  = uart_tx;   
+    assign spi_miso = spi_mosi;  
+    pullup(i2c_scl);             
     pullup(i2c_sda);
 
     // ========================================================
     // Test sequence
     // ========================================================
     initial begin
-        // Load firmware vào ROM
+        // Đổi đường dẫn tuyệt đối cho phù hợp với máy bạn
         $readmemh("D:/HK252/Soc_Sim/soc_firmware/my_soc_firmware_word.hex", uut.u_axi_rom.rom_memory);
 
-        // Giá trị mặc định
         tck = 0; trst_n = 1; tms = 0; tdi = 0;
         gpio_in = 0;
         rst_n = 0;
 
-        // Giữ reset một chút cho ổn định
         #100;
         rst_n = 1;
 
-        // Đợi firmware chạy init
-        #50000;
+        // TĂNG THỜI GIAN LÊN MỨC KHỔNG LỒ (5 ms)
+        #5000000;
 
-        // Giả lập nhấn nút GPIO[1]
         gpio_in[1] = 1; 
         #5000;          
         gpio_in[1] = 0; 
 
-        // Chạy thêm rồi kết thúc
         #2000000;
+        $display("SIMULATION FINISHED");
         $finish;
     end
 

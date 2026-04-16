@@ -6,13 +6,12 @@
 /* =========================================================
  * 1. AXI BUS MEMORY MAP
  * ========================================================= */
-#define BOOT_ROM_BASE       0x00000000  // S0: ROM (64KB)
+#define BOOT_ROM_BASE       0x00010000  // S0: ROM
 #define CLINT_BASE          0x02000000  // S5: Core Local Interruptor
-#define SYSTEM_RAM_BASE     0x20000000  // S1: On-chip SRAM (128KB)
+#define SYSTEM_RAM_BASE     0x80000000  // S1: On-chip SRAM
 #define SPI_FLASH_BASE      0x30000000  // S2: External SPI Flash (16MB)
 #define APB_BRIDGE_BASE     0x40000000  // S4: APB Peripherals Bridge
-#define SDRAM_BASE          0x80000000  // S3: Off-chip SDRAM (64MB)
-
+#define SDRAM_BASE          0x20000000  // S3: Off-chip SDRAM
 /* =========================================================
  * 2. APB PERIPHERALS BASE
  * ========================================================= */

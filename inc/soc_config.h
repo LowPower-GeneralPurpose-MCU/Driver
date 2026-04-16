@@ -21,7 +21,7 @@
 #define CONFIG_HAS_CORDIC   0   // Hardware CORDIC Coprocessor (Chưa viết driver)
 
 // --- Memory & Bus Masters ---
-#define CONFIG_HAS_DMA      1   // Direct Memory Access (Đã tích hợp)
+#define CONFIG_HAS_DMA      0   // Direct Memory Access (Đã tích hợp)
 #define CONFIG_HAS_SDRAM    0   // External SDRAM Controller
 #define CONFIG_HAS_QSPI     0   // External SPI Flash Controller
 

@@ -68,8 +68,8 @@ void system_trap_handler(uint32_t mcause, uint32_t mepc) {
     // ---------------------------------------------------------
     else if (mcause == CAUSE_MACHINE_TIMER_INT) {
         // Log thông báo hoặc cập nhật biến đếm thời gian
-        // Lưu ý: printf trong ngắt sẽ làm chậm hệ thống, chỉ dùng khi debug
-        printf("[TICK] 1 second passed\n");
+        // Lưu ý: // printf trong ngắt sẽ làm chậm hệ thống, chỉ dùng khi debug
+        // printf("[TICK] 1 second passed\n");
 
         // Đặt lại thời điểm ngắt tiếp theo (1000ms sau)
         // Lưu ý: Dùng hằng số CLOCK từ soc_hw.h để chính xác
@@ -80,7 +80,7 @@ void system_trap_handler(uint32_t mcause, uint32_t mepc) {
     // LUỒNG 3: NGẮT PHẦN MỀM TỪ CLINT
     // ---------------------------------------------------------
     else if (mcause == CAUSE_MACHINE_SOFTWARE_INT) {
-        printf("[SOFT] Software interrupt received\n");
+        // printf("[SOFT] Software interrupt received\n");
         clint_clear_soft_irq();
     }
 
@@ -88,12 +88,12 @@ void system_trap_handler(uint32_t mcause, uint32_t mepc) {
     // LUỒNG 4: CÁC LỖI NGOẠI LỆ (EXCEPTIONS)
     // ---------------------------------------------------------
     else {
-        printf("\n!!! CPU EXCEPTION DETECTED !!!\n");
-        printf("MCAUSE: 0x%08lx | MEPC: 0x%08lx\n", mcause, mepc);
+        // printf("\n!!! CPU EXCEPTION DETECTED !!!\n");
+        // printf("MCAUSE: 0x%08lx | MEPC: 0x%08lx\n", mcause, mepc);
         
-        if (mcause == 2)      printf("Error: Illegal Instruction (Check FPU/Extensions)\n");
-        else if (mcause == 5) printf("Error: Load Access Fault (Invalid Read Address)\n");
-        else if (mcause == 7) printf("Error: Store Access Fault (Invalid Write Address)\n");
+        if (mcause == 2)      {}// printf("Error: Illegal Instruction (Check FPU/Extensions)\n");
+        else if (mcause == 5)    {}// printf("Error: Load Access Fault (Invalid Read Address)\n");
+        else if (mcause == 7)    {}// printf("Error: Store Access Fault (Invalid Write Address)\n");
         
         // Treo hệ thống để bảo vệ phần cứng
         while(1) {

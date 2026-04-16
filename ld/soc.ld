@@ -1,18 +1,14 @@
+
 OUTPUT_ARCH( "riscv" )
 ENTRY( _start ) /* Điểm bắt đầu là _start trong file crt0.S */
 
 /* Physical Memory Map*/
 MEMORY
 {
-  /* Text/ROData nằm trên SPI Flash qua bộ điều khiển AXI QSPI */
-  ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 64K
-  
-  /* Data/BSS/Stack nằm trên On-chip SRAM (S1) */
-  RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
-
-  FLASH (rx) : ORIGIN = 0x30000000, LENGTH = 16M
+  ROM (rx)  : ORIGIN = 0x00010000, LENGTH = 64K
+  RAM (rwx)  : ORIGIN = 0x80000000, LENGTH = 64K 
+  FLASH (rx) : ORIGIN = 0x50000000, LENGTH = 16M
 }
-
 /* Initiate Stack:  Nằm ở cuối cùng của 64KB RAM */
 _estack = ORIGIN(RAM) + LENGTH(RAM); /* 0x80010000 */
 

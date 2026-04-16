@@ -1,6 +1,9 @@
 // File: src/syscalls.c
 // Mô tả: Cung cấp vùng nhớ Heap cho thư viện C
 
+#include <sys/stat.h>
+#include "uart.h"  
+extern UART_HandleTypeDef huart0;
 void *_sbrk(int incr) {
     extern char _ebss; // Lấy địa chỉ cuối vùng biến BSS từ Linker Script
     static char *heap_end;
@@ -15,6 +18,10 @@ void *_sbrk(int incr) {
     return (void *)prev_heap_end;
 }
 
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart0, (uint8_t*)ptr, len);
+    return len;
+}
 // Các hàm rỗng để chống báo lỗi thư viện
 int _close(int file) { return -1; }
 int _fstat(int file, void *st) { return 0; }
