@@ -9,16 +9,18 @@
 // --------------------------------------------------------
 // Cấp xung nhịp cho một khối ngoại vi
 void syscon_enable_clock(uint8_t peripheral_bit) {
-    if (peripheral_bit > 6) return; // Chỉ có 7 bit (0-6)
+    //if (peripheral_bit > 7) return;
     SYSCON_CLK_GATE |= (1 << peripheral_bit);
+    
 }
 
 // Hàm ngắt xung nhịp để tiết kiệm điện
 void syscon_disable_clock(uint8_t peripheral_bit) {
-    if (peripheral_bit > 6) return;
+    if (peripheral_bit > 7) return;
+    if (peripheral_bit == SYSCON_CLK_CPU) return;
+    
     SYSCON_CLK_GATE &= ~(1 << peripheral_bit);
 }
-
 // Hàm đổi địa chỉ Boot (dùng cho Bootloader nhảy sang vùng nhớ khác)
 void syscon_set_boot_address(uint16_t addr_offset) {
     SYSCON_RESET_VECTOR = (uint32_t)addr_offset;
@@ -28,7 +30,7 @@ void syscon_set_boot_address(uint16_t addr_offset) {
 // Chỉ gọi 1 lần duy nhất ở đầu hàm main()
 void syscon_init_clocks(void) {
     uint32_t clock_mask = 0;
-    // 1. Luôn cấp điện cho các khối Bắt buộc (Mandatory)
+    // 1. Luôn cấp điện cho các khối Bắt buộc (Mandatory) 
     clock_mask |= (1 << SYSCON_CLK_UART);
     clock_mask |= (1 << SYSCON_CLK_DEBUG); // Cần thiết để nạp code qua JTAG/OpenOCD
 

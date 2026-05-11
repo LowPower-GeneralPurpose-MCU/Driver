@@ -1,151 +1,88 @@
-/* ==================================================================
- * File: src/main.c
- * Mô tả: Chương trình chính - Kích hoạt hệ thống Event-Driven
- * Chuẩn hóa: RISC-V HAL Architecture (Application Layer)
- * ================================================================== */
-#include <stdint.h>  
+#include <stdint.h>
 #include <stdio.h>
-#include "../inc/soc_hw.h"
-#include "../inc/syscon.h" 
-#include "../inc/uart.h"
-#include "../inc/plic.h"
-#include "../inc/clint.h"
-#include "../inc/gpio.h"   
-#include "../inc/dma.h"
-#include "../inc/wdt.h"
 #include "../inc/soc_config.h"
+#include "../inc/soc_hw.h"
+#include "../inc/clint.h"
+#include "../inc/plic.h"
 
-#define SYSTEM_BUS_CLOCK 200000000 
-#define UART_CLK         100000000
-#define RTC_CLOCK_HZ     32768     // Tần số thật của RTC
+#if CONFIG_HAS_SYSCON
+#include "../inc/syscon.h"
+#endif
 
-/* ==================================================================
- * 1. KHAI BÁO CÁC ĐỐI TƯỢNG QUẢN LÝ (HANDLES) & BIẾN TOÀN CỤC
- * ================================================================== */
+#if CONFIG_HAS_UART
+#include "../inc/uart.h"
+#define UART_CLK 100000000
 UART_HandleTypeDef huart0;
+#endif
 
-volatile uint32_t *src_arr = (volatile uint32_t *)0x20010000; 
-volatile uint32_t *dst_arr = (volatile uint32_t *)0x20010040;
+#if CONFIG_HAS_GPIO
+#include "../inc/gpio.h"
+#endif
 
+extern void trap_entry(void);
 
-/* ==================================================================
- * 2. HÀM MAIN - NHẠC TRƯỞNG CỦA HỆ THỐNG
- * ================================================================== */
-int main(void) {
-    // A. CẤP NGUỒN TỰ ĐỘNG QUA SYSCON
+int main(void)
+{
+    __asm__ volatile("csrw mtvec, %0" :: "r"(trap_entry));
+
+#if CONFIG_HAS_SYSCON
     syscon_init_clocks();
+#endif
 
-    // B. KHỞI TẠO NGOẠI VI GIAO TIẾP 
-    huart0.Instance = UART0; 
-    HAL_UART_Init(&huart0, UART_CLK, 115200);
-    
-    clint_init();
+#if CONFIG_HAS_FPU
+    __asm__ volatile("csrs mstatus, %0" :: "r"(0x6000));
+#endif
 
-    uint8_t test_msg[] = "HELLO RISC-V!\n";
-    HAL_UART_Transmit(&huart0, test_msg, 14);
-    // C. CẤU HÌNH NGOẠI VI CƠ BẢN (SỬ DỤNG HAL_GPIO)
+    plic_set_threshold(0);
+
+#if CONFIG_HAS_GPIO
     GPIO_InitTypeDef GPIO_InitStruct;
 
-    // Chân 0: Gắn LED (Output)
     GPIO_InitStruct.Pin = GPIO_PIN_0;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT;
-    HAL_GPIO_Init(GPIO0, &GPIO_InitStruct);
 
-    // Chân 1: Gắn Nút nhấn (Input + Bật ngắt)
-    GPIO_InitStruct.Pin = GPIO_PIN_1;
-    GPIO_InitStruct.Mode = GPIO_MODE_IT;
     HAL_GPIO_Init(GPIO0, &GPIO_InitStruct);
+#endif
 
-    // D. CẤU HÌNH TỔNG ĐÀI NGẮT (PLIC)
-    plic_set_threshold(0); 
-    
-    plic_set_priority(IRQ_UART, 7); 
+#if CONFIG_HAS_UART
+    huart0.Instance = UART0;
+
+    HAL_UART_Init(&huart0, UART_CLK, 115200);
+
+    plic_set_priority(IRQ_UART, 7);
     plic_enable_interrupt(IRQ_UART);
 
-    plic_set_priority(IRQ_GPIO, 5);  
-    plic_enable_interrupt(IRQ_GPIO);
+    uint8_t test_msg[] = "HELLO RISC-V UART TEST!\n";
 
-    // E. KHỞI TẠO KHỐI DMA -> ĐÃ TẮT HOÀN TOÀN
-    // HAL_DMA_Init();
-    // plic_set_priority(IRQ_DMA_CH0, 6);  
-    // plic_enable_interrupt(IRQ_DMA_CH0);
-    // // printf("[INFO] DMA Module Enabled & Configured.\n");
+    HAL_UART_Transmit(&huart0, test_msg, sizeof(test_msg) - 1);
+#endif
 
-    // F. KHỞI TẠO BỘ TÍNH TOÁN DẤU PHẨY ĐỘNG
-    #if CONFIG_HAS_FPU
-        __asm__ volatile ("li t0, 0x00006000; csrs mstatus, t0");
-        // printf("[INFO] Hardware FPU is ENABLED.\n");
-    #endif
+    __asm__ volatile("csrs mie, %0" ::"r"(0x800));
+    __asm__ volatile("csrs mstatus, %0" ::"r"(0x8));
 
-    // G. LÊN ĐẠN CHO NHỊP TIM HỆ THỐNG (CLINT TIMER)
-    clint_set_timer_ms(1, RTC_CLOCK_HZ);
-    // printf("[INFO] PLIC, CLINT & GPIO Configured.\n");
-
-    // H. MỞ KHÓA NGẮT TOÀN CỤC
-    __asm__ volatile ("csrs mie, %0" :: "r"(0x880)); 
-    __asm__ volatile ("csrs mstatus, %0" :: "r"(0x8)); 
-    // printf("[INFO] Global Interrupts ENABLED! System is running.\n");
-
-    // I. PHÁT LỆNH TEST DMA -> ĐÃ TẮT HOÀN TOÀN
-    // for(int i=0; i<10; i++) {
-    //     src_arr[i] = i + 1; 
-    //     dst_arr[i] = 0;     
-    // }
-    // // printf("[TEST] Triggering DMA transfer (40 bytes)...\n");
-    // HAL_DMA_Config(DMA_CH0, (uint32_t)src_arr, (uint32_t)dst_arr, 40, 1, 1, 16, 0);
-    // HAL_DMA_Start(DMA_CH0);
-
-    // Kích hoạt Watchdog Timer
-    HAL_WDT_Init(WDT0, 400000000);
-    // printf("[INFO] Watchdog Armed!\n");
-
-    // J. VÒNG LẶP CHÍNH (THE SUPER LOOP)
-    while (1) {
-        // NUÔI CHÓ TRƯỚC KHI ĐI NGỦ! (Cực kỳ quan trọng để chống Reset)
-        HAL_WDT_Refresh(WDT0);
-
-        // Ngủ chờ ngắt (Tiết kiệm điện)
-        __asm__ volatile ("wfi"); 
+    while (1)
+    {
+        __asm__ volatile("wfi");
     }
 
-    return 0; 
+    return 0;
 }
 
-/* ==================================================================
- * 3. TẦNG ỨNG DỤNG: BUSINESS LOGIC & CALLBACKS
- * ================================================================== */
-
-// Callback: Xử lý dữ liệu UART
-void HAL_UART_RxCallback(UART_HandleTypeDef *huart, uint8_t rx_data) {
-    if (huart->Instance == UART0) {
-        // printf("\n[UART EVENT] Ban vua go: %c\n", rx_data);
-        
-        // Điều khiển LED qua chuẩn HAL
-        if (rx_data == '1') {
-            HAL_GPIO_WritePin(GPIO0, GPIO_PIN_0, GPIO_PIN_SET); 
-            // printf("-> Da bat LED tren Chan 0!\n");
-        } 
-        else if (rx_data == '0') {
-            HAL_GPIO_WritePin(GPIO0, GPIO_PIN_0, GPIO_PIN_RESET);
-            // printf("-> Da tat LED tren Chan 0!\n");
+#if CONFIG_HAS_UART
+void HAL_UART_RxCallback(UART_HandleTypeDef *huart, uint8_t rx_data)
+{
+    if (huart->Instance == UART0)
+    {
+#if CONFIG_HAS_GPIO
+        if (rx_data == '1')
+        {
+            HAL_GPIO_WritePin(GPIO0, GPIO_PIN_0, GPIO_PIN_SET);
         }
+        else if (rx_data == '0')
+        {
+            HAL_GPIO_WritePin(GPIO0, GPIO_PIN_0, GPIO_PIN_RESET);
+        }
+#endif
     }
 }
-
-// Callback: Xử lý sau khi nhấn nút trên mạch
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    if (GPIO_Pin == GPIO_PIN_1) {
-        // printf("\n[GPIO EVENT] Phat hien nhan nut o Chan 1!\n");
-        
-        // Bạn có thể cho LED chớp 1 cái để phản hồi:
-        HAL_GPIO_TogglePin(GPIO0, GPIO_PIN_0);
-    }
-}
-
-// Callback: Xử lý sau khi DMA copy xong -> Để hàm rỗng cho an toàn
-void HAL_DMA_TransferCompleteCallback(DMA_Channel_TypeDef *dma_ch) {
-    // if (dma_ch == DMA_CH0) {
-    //     // printf("\n[DMA EVENT] Kenh 0 da copy xong du lieu!\n");
-    //     // printf("-> Gia tri dst_arr[0]: %lu (Ky vong: 1)\n", dst_arr[0]); 
-    // }
-}
+#endif

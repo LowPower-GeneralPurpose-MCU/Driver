@@ -1,6 +1,8 @@
 //==================================================================================================
 // File: multiplier_divider_unit.v
 //==================================================================================================
+`timescale 1ns / 1ps
+
 module multiplier (
     input clk,
     input reset_n,
@@ -148,6 +150,13 @@ module multiplier (
             STATE_BUSY: begin
                 md_alu_stall_next = 1'b1;
                 
+                if (!mul_inst_w) begin
+                    md_alu_stall_next = 1'b0;
+                    md_alu_done_next = 1'b0;
+                    state_next = STATE_IDLE;
+                    product_next = 64'b0;
+                    counter_next = 6'b0;
+                end else begin
                 prod_temp = product;
                 mcand_temp = multiplicand;
                 mplier_temp = multiplier;
@@ -209,6 +218,7 @@ module multiplier (
                         end
                     endcase
                 end
+                end
             end
 
             STATE_DONE: begin
@@ -219,7 +229,6 @@ module multiplier (
                 // Chỉ thoát khi ID/EX nhả lệnh
                 if (!stall_id_ex) begin
                     state_next = STATE_IDLE;
-                    md_alu_done_next = 1'b0;
                 end else begin
                     state_next = STATE_DONE;
                 end
@@ -259,9 +268,9 @@ module multiplier (
         end
     end
 
-    assign md_alu_done = md_alu_done_next;
-    assign md_alu_stall = md_alu_stall_next;
-    assign md_result = md_result_next;
+    assign md_alu_done = (state == STATE_DONE);
+    assign md_alu_stall = (state == STATE_BUSY) || start_mul;
+    assign md_result = md_result_reg;
 
 endmodule
 
@@ -292,7 +301,8 @@ module divider (
 
     localparam STATE_IDLE = 2'b00;
     localparam STATE_BUSY = 2'b01;
-    localparam STATE_DONE = 2'b10;
+    localparam STATE_FINAL = 2'b10;
+    localparam STATE_DONE = 2'b11;
 
     reg [1:0] state;
 
@@ -374,8 +384,12 @@ module divider (
                     mask <= mask_tmp;
 
                     if (mask_tmp == 32'd0) begin
-                        state <= STATE_DONE;
+                        state <= STATE_FINAL;
                     end
+                end
+
+                STATE_FINAL: begin
+                    state <= STATE_DONE;
                 end
 
                 STATE_DONE: begin
@@ -426,34 +440,33 @@ module divider (
 
                 md_alu_stall_next = 1'b1;
                 md_alu_done_next = 1'b0;
+            end
 
-                if (mask_tmp == 32'd0) begin
-                    md_alu_stall_next = 1'b0;
-                    md_alu_done_next = 1'b1;
+            STATE_FINAL: begin
+                md_alu_stall_next = 1'b1;
+                md_alu_done_next = 1'b0;
 
-                    if (divisor_abs == 32'd0) begin
-                        if (div_inst_q) begin
-                            md_result_next = 32'hFFFF_FFFF;
-                        end else begin
-                            md_result_next = dividend_orig;
-                        end
+                if (divisor_abs == 32'd0) begin
+                    if (div_inst_q) begin
+                        md_result_next = 32'hFFFF_FFFF;
                     end else begin
-                        if (div_inst_q) begin
-                            if (invert_res) begin
-                                md_result_next = -quo_tmp;
-                            end else begin
-                                md_result_next = quo_tmp;
-                            end
-                        end else begin
-                            if (invert_res) begin
-                                md_result_next = -rem_tmp;
-                            end else begin
-                                md_result_next = rem_tmp;
-                            end
-                        end
+                        md_result_next = dividend_orig;
+                    end
+                end else if (div_inst_q) begin
+                    if (invert_res) begin
+                        md_result_next = -quotient;
+                    end else begin
+                        md_result_next = quotient;
+                    end
+                end else begin
+                    if (invert_res) begin
+                        md_result_next = -remainder;
+                    end else begin
+                        md_result_next = remainder;
                     end
                 end
             end
+
             STATE_DONE: begin
                 md_alu_stall_next = 1'b0;
                 md_alu_done_next  = 1'b1;
@@ -462,8 +475,8 @@ module divider (
         endcase
     end
     
-    assign md_result = md_result_next;
-    assign md_alu_stall = md_alu_stall_next;
-    assign md_alu_done = md_alu_done_next;
+    assign md_result = md_result_reg;
+    assign md_alu_stall = (state == STATE_BUSY) || (state == STATE_FINAL) || start_div;
+    assign md_alu_done = (state == STATE_DONE);
 
 endmodule

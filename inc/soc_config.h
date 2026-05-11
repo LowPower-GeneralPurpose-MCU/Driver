@@ -28,7 +28,7 @@
 // --- Standard Peripherals ---
 #define CONFIG_HAS_ACCEL    0   // Bộ tăng tốc phần cứng
 #define CONFIG_HAS_CORDIC   0   // Bộ tính toán lượng giác
-#define CONFIG_HAS_GPIO     1   // Luôn bật
+#define CONFIG_HAS_GPIO     0   
 #define CONFIG_HAS_I2C      1   
 #define CONFIG_HAS_SPI      1  
 #define CONFIG_HAS_SYSCON   1   

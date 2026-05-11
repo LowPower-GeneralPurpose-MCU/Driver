@@ -37,6 +37,6 @@ void HAL_UART_Init(UART_HandleTypeDef *huart, uint32_t sys_clk, uint32_t baudrat
 void HAL_UART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size);
 void HAL_UART_IRQHandler(UART_HandleTypeDef *huart);
 void HAL_UART_RxCallback(UART_HandleTypeDef *huart, uint8_t rx_data);
-void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num);
-void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num);
+void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch,  uint8_t *pData, uint16_t Size, uint8_t periph_num);
+void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch,  uint8_t *pData, uint16_t Size, uint8_t periph_num);
 #endif

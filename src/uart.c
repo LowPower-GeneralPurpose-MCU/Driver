@@ -22,6 +22,7 @@ void HAL_UART_Init(UART_HandleTypeDef *huart, uint32_t sys_clk, uint32_t baudrat
 
     huart->State = HAL_UART_STATE_READY;
 }
+
 // =========================================================
 // TRUYỀN DỮ LIỆU (POLLING)
 // =========================================================
@@ -64,9 +65,7 @@ void HAL_UART_IRQHandler(UART_HandleTypeDef *huart) {
 // =========================================================
 // TRUYỀN BẰNG DMA (NON-BLOCKING)
 // =========================================================
-
-/*
-void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
+void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch,  uint8_t *pData, uint16_t Size, uint8_t periph_num) {
     if (huart->State != HAL_UART_STATE_READY) return;
     if (pData == NULL || Size == 0 || dma_ch == NULL) return;
 
@@ -85,15 +84,11 @@ void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_c
     // Bật TX DMA request
     huart->Instance->DMA_INT |= (1 << 2);
 }
-*/
-
 
 // =========================================================
 // NHẬN BẰNG DMA
 // =========================================================
-
-
-/*void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
+void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
     if (huart->State != HAL_UART_STATE_READY) return;
     if (pData == NULL || Size == 0 || dma_ch == NULL) return;
 
@@ -111,9 +106,8 @@ void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_c
 
     // Bật RX DMA request
     huart->Instance->DMA_INT |= (1 << 3);
-}*/
-
+}
 
 __attribute__((weak)) void HAL_UART_RxCallback(UART_HandleTypeDef *huart, uint8_t rx_data) {
-
+    // Để trống cho user override ở main
 }
