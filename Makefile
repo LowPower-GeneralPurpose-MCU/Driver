@@ -1,24 +1,28 @@
-# 1. Tên dự án và tiền tố của Toolchain
 TARGET = my_soc_firmware
-TOOLCHAIN = /mnt/d/HK252/Soc_Sim/soc_firmware/xpack-riscv-none-elf-gcc-14.2.0-2/bin/riscv-none-elf-
+CROSS_COMPILE ?= riscv-none-elf-
+PYTHON_CMD ?= python
+HEX_BASE ?= 0x10000
 
-CC      = $(TOOLCHAIN)gcc
-OBJCOPY = $(TOOLCHAIN)objcopy
-OBJDUMP = $(TOOLCHAIN)objdump
+override PYTHONHOME :=
+override PYTHONPATH :=
+export PYTHONHOME
+export PYTHONPATH
 
-# 2. Các cờ biên dịch (Compiler Flags)
-ARCH_FLAGS = -march=rv32imf -mabi=ilp32f
+CC      = $(CROSS_COMPILE)gcc
+OBJCOPY = $(CROSS_COMPILE)objcopy
+OBJDUMP = $(CROSS_COMPILE)objdump
+ROM_HEX = $(TARGET)_word.hex
+ROM_MEM = $(TARGET)_word.mem
+
+ARCH_FLAGS = -march=rv32im_zicsr -mabi=ilp32
 CFLAGS = -Wall -O2 -g $(ARCH_FLAGS) -Iinc
+LDFLAGS = -T ld/soc.ld -nostartfiles -Wl,-Map=$(TARGET).map
 
-LDFLAGS = -T ld/soc.ld -nostartfiles --specs=nano.specs -Wl,-Map=$(TARGET).map
-
-# 4. Tìm kiếm file tự động
 C_SRCS   = $(wildcard src/*.c)
 ASM_SRCS = $(wildcard startup/*.S)
 OBJS     = $(C_SRCS:.c=.o) $(ASM_SRCS:.S=.o)
 
-# SỬA ĐIỂM SỐ 1: Thêm $(TARGET).hex vào danh sách xuất xưởng
-all: $(TARGET).elf $(TARGET).bin $(TARGET).hex $(TARGET).dis
+all: $(TARGET).elf $(TARGET).bin $(TARGET).hex $(ROM_HEX) $(ROM_MEM) $(TARGET).dis
 
 $(TARGET).elf: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
@@ -28,6 +32,12 @@ $(TARGET).bin: $(TARGET).elf
 
 $(TARGET).hex: $(TARGET).elf
 	$(OBJCOPY) -O verilog $< $@
+
+$(ROM_HEX): $(TARGET).hex
+	$(PYTHON_CMD) src/hex_converter.py $< $@ $(HEX_BASE)
+
+$(ROM_MEM): $(TARGET).hex
+	$(PYTHON_CMD) src/hex_converter.py $< $@ $(HEX_BASE)
 
 $(TARGET).dis: $(TARGET).elf
 	$(OBJDUMP) -d -S $< > $@
@@ -39,6 +49,6 @@ $(TARGET).dis: $(TARGET).elf
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f src/*.o startup/*.o $(TARGET).elf $(TARGET).bin $(TARGET).hex $(TARGET).map $(TARGET).dis
+	rm -f src/*.o startup/*.o $(TARGET).elf $(TARGET).bin $(TARGET).hex $(ROM_HEX) $(ROM_MEM) $(TARGET).map $(TARGET).dis
 
 .PHONY: all clean

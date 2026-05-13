@@ -88,16 +88,12 @@ void system_trap_handler(uint32_t mcause, uint32_t mepc) {
     // LUỒNG 4: CÁC LỖI NGOẠI LỆ (EXCEPTIONS)
     // ---------------------------------------------------------
     else {
-        // printf("\n!!! CPU EXCEPTION DETECTED !!!\n");
-        // printf("MCAUSE: 0x%08lx | MEPC: 0x%08lx\n", mcause, mepc);
-        
-        if (mcause == 2)      {}// printf("Error: Illegal Instruction (Check FPU/Extensions)\n");
-        else if (mcause == 5)    {}// printf("Error: Load Access Fault (Invalid Read Address)\n");
-        else if (mcause == 7)    {}// printf("Error: Store Access Fault (Invalid Write Address)\n");
-        
-        // Treo hệ thống để bảo vệ phần cứng
-        while(1) {
-            __asm__ volatile ("wfi");
-        }
+        // Advance mepc past the faulting instruction so mret resumes at the next instruction.
+        // Compressed (16-bit) instructions have bits[1:0] != 2'b11; all others are 32-bit.
+        uint32_t faulting_instr = *(volatile uint32_t *)mepc;
+        uint32_t advance = ((faulting_instr & 0x3) == 0x3) ? 4 : 2;
+        __asm__ volatile ("csrw mepc, %0" :: "r"(mepc + advance));
+        // Return to trap_entry which will execute mret and resume after the fault.
+        return;
     }
 }

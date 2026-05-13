@@ -22,8 +22,8 @@ void syscon_disable_clock(uint8_t peripheral_bit) {
     SYSCON_CLK_GATE &= ~(1 << peripheral_bit);
 }
 // Hàm đổi địa chỉ Boot (dùng cho Bootloader nhảy sang vùng nhớ khác)
-void syscon_set_boot_address(uint16_t addr_offset) {
-    SYSCON_RESET_VECTOR = (uint32_t)addr_offset;
+void syscon_set_boot_address(uint32_t addr) {
+    SYSCON_RESET_VECTOR = addr;
 }
 
 // AUTO CLOCK-GATING FRAMEWORK

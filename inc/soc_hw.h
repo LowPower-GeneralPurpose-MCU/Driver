@@ -23,8 +23,8 @@
 #define WATCHDOG_BASE       (APB_BRIDGE_BASE + 0x5000) // S5: Watchdog
 #define ACCELERATOR_BASE    (APB_BRIDGE_BASE + 0x6000) // S6: CORDIC
 #define SYSCON_BASE         (APB_BRIDGE_BASE + 0x7000) // S7: System Control
-#define PLIC_BASE           (APB_BRIDGE_BASE + 0x8000) // S8: PLIC
-#define DMA_CFG_BASE        (APB_BRIDGE_BASE + 0x9000)
+#define PLIC_BASE           0x44000000  // S8: PLIC window decoded by APB interconnect
+#define DMA_CFG_BASE        (APB_BRIDGE_BASE + 0x8000)
 
 
 /* =========================================================

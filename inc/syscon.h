@@ -25,7 +25,7 @@
 /* Khai báo API */
 void syscon_enable_clock(uint8_t peripheral_bit);
 void syscon_disable_clock(uint8_t peripheral_bit);
-void syscon_set_boot_address(uint16_t addr_offset);
+void syscon_set_boot_address(uint32_t addr);
 
 /* API Tự động hóa cấp nguồn toàn hệ thống */
 void syscon_init_clocks(void);

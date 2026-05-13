@@ -22,10 +22,10 @@ _start:
     
     li t0, 0x00006000   # 0x6000 = 0110 0000 0000 0000
     csrs mstatus, t0    #csrw = control and status register set (Set cac bit trong mstatus theo t0)
-    #endif
     
     /* Khởi tạo thanh ghi Floating point Control (fcsr) về 0 (Mặc định la Round to Nearest) */
     csrw fcsr, zero       
+    #endif
 
     /* ----------------------------------------------------------------
      * 2. Thiet lap moi truong C (C ENVIRONMENT)
