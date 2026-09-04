@@ -90,6 +90,25 @@ module tb_top_soc();
     // ========================================================
     // Instantiate SoC
     // ========================================================
+    // -------------------------------------------------------------------
+    // MO HINH PAD - top_soc khong con port hai chieu, moi chan chia se duoc
+    // dua ra thanh `_i` / `_o` / `_oe` de bat vao pad cell.  `_oe` la enable
+    // MUC CAO.  Testbench dong vai tro pad de giu lai cac net `tri` cu.
+    // -------------------------------------------------------------------
+    wire        dut_i2c_scl_o, dut_i2c_scl_oe;
+    wire        dut_i2c_sda_o, dut_i2c_sda_oe;
+    wire [3:0]  dut_flash_io_o, dut_flash_io_oe;
+    wire [15:0] dut_sdram_dq_o;
+    wire        dut_sdram_dq_oe;
+
+    assign i2c_scl     = dut_i2c_scl_oe    ? dut_i2c_scl_o    : 1'bz;
+    assign i2c_sda     = dut_i2c_sda_oe    ? dut_i2c_sda_o    : 1'bz;
+    assign flash_io[0] = dut_flash_io_oe[0] ? dut_flash_io_o[0] : 1'bz;
+    assign flash_io[1] = dut_flash_io_oe[1] ? dut_flash_io_o[1] : 1'bz;
+    assign flash_io[2] = dut_flash_io_oe[2] ? dut_flash_io_o[2] : 1'bz;
+    assign flash_io[3] = dut_flash_io_oe[3] ? dut_flash_io_o[3] : 1'bz;
+    assign sdram_dq    = dut_sdram_dq_oe   ? dut_sdram_dq_o   : 16'hzzzz;
+
     top_soc uut (
         .clk_core      (clk_400m),
         .clk_axi       (clk_200m),
@@ -117,12 +136,12 @@ module tb_top_soc();
         .spi_miso(spi_miso),
         .spi_ss(spi_ss), 
 
-        .i2c_scl(i2c_scl),
-        .i2c_sda(i2c_sda),
+        .i2c_scl_i(i2c_scl), .i2c_scl_o(dut_i2c_scl_o), .i2c_scl_oe(dut_i2c_scl_oe),
+        .i2c_sda_i(i2c_sda), .i2c_sda_o(dut_i2c_sda_o), .i2c_sda_oe(dut_i2c_sda_oe),
 
         .flash_sck(flash_sck), 
         .flash_cs_n(flash_cs_n), 
-        .flash_io(flash_io),
+        .flash_io_i(flash_io), .flash_io_o(dut_flash_io_o), .flash_io_oe(dut_flash_io_oe),
 
         .sdram_clk(sdram_clk), 
         .sdram_cke(sdram_cke), 
@@ -132,7 +151,7 @@ module tb_top_soc();
         .sdram_we_n(sdram_we_n),
         .sdram_ba(sdram_ba), 
         .sdram_addr(sdram_addr), 
-        .sdram_dq(sdram_dq), 
+        .sdram_dq_i(sdram_dq), .sdram_dq_o(dut_sdram_dq_o), .sdram_dq_oe(dut_sdram_dq_oe),
         .sdram_dqm(sdram_dqm)
     );
 
@@ -425,18 +444,23 @@ module tb_top_soc();
             end
         end
 
-        $display("Loading firmware: %0s", firmware_hex);
+        // -------------------------------------------------------------------
+        // NAP FIRMWARE
+        //
+        // axi_rom KHONG con mang `rom_memory` de $readmemh ghi de: no da thanh
+        // mot bang `case` tong hop duoc, sinh tu boot.mem thanh
+        // rtl/memory/boot_rom_image.vh boi tcl/genus.tcl.  Vi vay firmware phai
+        // duoc BAKE VAO truoc khi bien dich, khong nap duoc luc chay:
+        //
+        //     python rtl/tests/gen_boot_rom.py <file.mem> <thu_muc_include_sim>
+        //     xvlog -i <thu_muc_include_sim> ...      # dat TRUOC rtl/ tren -i
+        //
+        // rtl/tests/run_soc_sim.sh lam san viec nay.  `firmware_hex` chi con la
+        // nhan de doc log cho biet ban ROM nao dang chay.
+        // -------------------------------------------------------------------
+        $display("[TB][BOOT] ROM image compiled in (expected source: %0s)", firmware_hex);
         if (debug_fd != 0) begin
-            $fdisplay(debug_fd, "[TB][BOOT] Loading firmware: %0s", firmware_hex);
-        end
-        $readmemh(firmware_hex, uut.u_axi_rom.rom_memory);
-        $display("[TB][ROM] word0=%08h word1=%08h word2=%08h word3=%08h",
-                 uut.u_axi_rom.rom_memory[0], uut.u_axi_rom.rom_memory[1],
-                 uut.u_axi_rom.rom_memory[2], uut.u_axi_rom.rom_memory[3]);
-        if (debug_fd != 0) begin
-            $fdisplay(debug_fd, "[TB][ROM] word0=%08h word1=%08h word2=%08h word3=%08h",
-                      uut.u_axi_rom.rom_memory[0], uut.u_axi_rom.rom_memory[1],
-                      uut.u_axi_rom.rom_memory[2], uut.u_axi_rom.rom_memory[3]);
+            $fdisplay(debug_fd, "[TB][BOOT] ROM image compiled in (expected source: %0s)", firmware_hex);
         end
 
         tck = 0; trst_n = 1; tms = 0; tdi = 0;
