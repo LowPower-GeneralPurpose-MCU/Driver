@@ -1,5 +1,5 @@
 TARGET = my_soc_firmware
-CROSS_COMPILE ?= riscv-none-elf-
+CROSS_COMPILE ?= /home/dosang/opt/riscv32/bin/riscv32-unknown-elf-
 PYTHON_CMD ?= python
 HEX_BASE ?= 0x10000
 
@@ -48,7 +48,7 @@ $(TARGET).dis: $(TARGET).elf
 %.o: %.S
 	$(CC) $(CFLAGS) -c $< -o $@
 
-clean:
+clear:
 	rm -f src/*.o startup/*.o $(TARGET).elf $(TARGET).bin $(TARGET).hex $(ROM_HEX) $(ROM_MEM) $(TARGET).map $(TARGET).dis
 
-.PHONY: all clean
+.PHONY: all clear

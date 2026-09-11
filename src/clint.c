@@ -18,9 +18,13 @@ uint64_t clint_get_mtime(void) {
 
 void clint_set_timer_ms(uint32_t ms, uint32_t timer_freq_hz) {
     uint64_t current_time = clint_get_mtime();
-    
-    uint32_t ticks_per_ms = timer_freq_hz / 1000;
-    uint64_t target = current_time + ((uint64_t)ms * ticks_per_ms);
+
+    /* Nhan truoc, chia sau. timer_freq_hz o day la RTC_CLOCK_HZ = 32768, nen
+       `timer_freq_hz / 1000` bi cat con 32 -> sai so 2.3% moi lan hen gio va
+       don lai theo tung tick. Voi tan so < 1 MHz phep chia truoc la khong dung
+       duoc. Tich lon nhat ~ 2^32 * 2^32 nen phai lam trong 64-bit. */
+    uint64_t target = current_time +
+                      (((uint64_t)ms * (uint64_t)timer_freq_hz) / 1000u);
 
     CLINT_MTIMECMP_HI = 0xFFFFFFFF; 
     CLINT_MTIMECMP_LO = (uint32_t)(target & 0xFFFFFFFF);
@@ -37,9 +41,9 @@ void clint_clear_soft_irq(void) {
 
 void HAL_Delay(uint32_t ms, uint32_t timer_freq_hz) {
     uint64_t start_time = clint_get_mtime();
-    
-    uint32_t ticks_per_ms = timer_freq_hz / 1000;
-    uint64_t ticks_to_wait = (uint64_t)ms * ticks_per_ms;
+
+    /* Nhan truoc, chia sau - cung ly do nhu clint_set_timer_ms. */
+    uint64_t ticks_to_wait = ((uint64_t)ms * (uint64_t)timer_freq_hz) / 1000u;
     
     while ((clint_get_mtime() - start_time) < ticks_to_wait) {
         __asm__ volatile ("nop"); 

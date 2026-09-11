@@ -14,1609 +14,2211 @@ _start:
    10000:	30001073          	csrw	mstatus,zero
     csrw mie, zero      
    10004:	30401073          	csrw	mie,zero
-    /* Enable Floating Point Unit
-       Bit 13, 14 của mstatus là trường FS (Floating Point status). FS = 01 (Initial) hoặc 11 (Dirty) 
-       0x00006000 tương đương với dịch bit 11 vào vị trí 13, 14 */
-    #if CONFIG_HAS_FPU
-    
-    li t0, 0x00006000   # 0x6000 = 0110 0000 0000 0000
-   10008:	000062b7          	lui	t0,0x6
-    csrs mstatus, t0    #csrw = control and status register set (Set cac bit trong mstatus theo t0)
-   1000c:	3002a073          	csrs	mstatus,t0
-    
-    /* Khởi tạo thanh ghi Floating point Control (fcsr) về 0 (Mặc định la Round to Nearest) */
-    csrw fcsr, zero       
-   10010:	00301073          	csrw	fcsr,zero
     /* ----------------------------------------------------------------
      * 2. Thiet lap moi truong C (C ENVIRONMENT)
      * ---------------------------------------------------------------- */
     /* Nạp Stack Pointer (sp) từ biến _estack trong linker.ld 
        sp sẽ trỏ vào đỉnh của On chip SRAM (0x80010000) */
     la sp, _estack
-   10014:	20010117          	auipc	sp,0x20010
-   10018:	fec10113          	addi	sp,sp,-20 # 20020000 <_estack>
+   10008:	20010117          	auipc	sp,0x20010
+   1000c:	ff810113          	addi	sp,sp,-8 # 20020000 <_estack>
 
     /* ----------------------------------------------------------------
      * 3. DDon dep RAM (COPY .DATA VÀ XÓA .BSS)
      * ---------------------------------------------------------------- */
     /* Bước 3.1: Copy vùng .data từ Flash sang RAM */
     la a0, _sdata       /* a0 = Bắt đầu vùng .data trên RAM */
-   1001c:	1fff0517          	auipc	a0,0x1fff0
-   10020:	fe450513          	addi	a0,a0,-28 # 20000000 <huart0>
+   10010:	1fff0517          	auipc	a0,0x1fff0
+   10014:	ff050513          	addi	a0,a0,-16 # 20000000 <huart0>
     la a1, _edata       /* a1 = Kết thúc vùng .data trên RAM */
-   10024:	1fff0597          	auipc	a1,0x1fff0
-   10028:	fdc58593          	addi	a1,a1,-36 # 20000000 <huart0>
+   10018:	1fff0597          	auipc	a1,0x1fff0
+   1001c:	fe858593          	addi	a1,a1,-24 # 20000000 <huart0>
     la a2, _sidata     /* a2 = Bắt đầu vùng dữ liệu nguồn trên Flash */
-   1002c:	00001617          	auipc	a2,0x1
-   10030:	b0060613          	addi	a2,a2,-1280 # 10b2c <_etext>
+   10020:	00001617          	auipc	a2,0x1
+   10024:	24c60613          	addi	a2,a2,588 # 1126c <_etext>
 
-00010034 <copy_data_loop>:
+00010028 <copy_data_loop>:
     
 copy_data_loop:
     bge a0, a1, copy_data_done  /* Nếu a0 >= a1 thì thoát vòng lặp */
-   10034:	00b55c63          	bge	a0,a1,1004c <copy_data_done>
+   10028:	00b55c63          	bge	a0,a1,10040 <copy_data_done>
     lw t0, 0(a2)                /* Đọc 1 word (4 byte) từ Flash */
-   10038:	00062283          	lw	t0,0(a2)
+   1002c:	00062283          	lw	t0,0(a2)
     sw t0, 0(a0)                /* Ghi 1 word đó xuống RAM */
-   1003c:	00552023          	sw	t0,0(a0)
+   10030:	00552023          	sw	t0,0(a0)
     addi a0, a0, 4              /* Tăng con trỏ RAM thêm 4 byte */
-   10040:	00450513          	addi	a0,a0,4
+   10034:	00450513          	addi	a0,a0,4
     addi a2, a2, 4              /* Tăng con trỏ Flash thêm 4 byte */
-   10044:	00460613          	addi	a2,a2,4
+   10038:	00460613          	addi	a2,a2,4
     j copy_data_loop            /* Lặp lại */
-   10048:	fedff06f          	j	10034 <copy_data_loop>
+   1003c:	fedff06f          	j	10028 <copy_data_loop>
 
-0001004c <copy_data_done>:
+00010040 <copy_data_done>:
 
 copy_data_done:
     /* Bước 3.2: Xóa vùng .bss (Biến toàn cục bằng 0) trên RAM */
     la a0, _sbss        /* a0 = Bắt đầu vùng .bss */
-   1004c:	1fff0517          	auipc	a0,0x1fff0
-   10050:	fb450513          	addi	a0,a0,-76 # 20000000 <huart0>
+   10040:	1fff0517          	auipc	a0,0x1fff0
+   10044:	fc050513          	addi	a0,a0,-64 # 20000000 <huart0>
     la a1, _ebss        /* a1 = Kết thúc vùng .bss */
-   10054:	1fff0597          	auipc	a1,0x1fff0
-   10058:	fbc58593          	addi	a1,a1,-68 # 20000010 <_ebss>
+   10048:	1fff0597          	auipc	a1,0x1fff0
+   1004c:	fc858593          	addi	a1,a1,-56 # 20000010 <_ebss>
 
-0001005c <clear_bss_loop>:
+00010050 <clear_bss_loop>:
     
 clear_bss_loop:
     bge a0, a1, clear_bss_done  /* Nếu a0 >= a1 thì thoát vòng lặp */
-   1005c:	00b55863          	bge	a0,a1,1006c <clear_bss_done>
+   10050:	00b55863          	bge	a0,a1,10060 <clear_bss_done>
     sw zero, 0(a0)              /* Ghi 32 bit số 0 xuống RAM */
-   10060:	00052023          	sw	zero,0(a0)
+   10054:	00052023          	sw	zero,0(a0)
     addi a0, a0, 4              /* Tăng con trỏ RAM thêm 4 byte */
-   10064:	00450513          	addi	a0,a0,4
+   10058:	00450513          	addi	a0,a0,4
     j clear_bss_loop            /* Lặp lại */
-   10068:	ff5ff06f          	j	1005c <clear_bss_loop>
+   1005c:	ff5ff06f          	j	10050 <clear_bss_loop>
 
-0001006c <clear_bss_done>:
+00010060 <clear_bss_done>:
     /* ----------------------------------------------------------------
      * 4. Giao lai quyen dieu khien cho phan mem C Code
      * ---------------------------------------------------------------- */
     /* Trỏ thanh ghi ngắt mtvec về 0 tạm thời (Sẽ được C code cấu hình sau) */
     #csrw mtvec, zero #Machine Trap Vector Base Address Register (noi Cpu nhay toi khi interupt, exception)
     la t0, trap_entry 
-   1006c:	00001297          	auipc	t0,0x1
-   10070:	a0428293          	addi	t0,t0,-1532 # 10a70 <trap_entry>
+   10060:	00001297          	auipc	t0,0x1
+   10064:	c0028293          	addi	t0,t0,-1024 # 10c60 <trap_entry>
     csrw mtvec, t0
-   10074:	30529073          	csrw	mtvec,t0
+   10068:	30529073          	csrw	mtvec,t0
     /* Nhảy vào hàm main() */
     call main
-   10078:	008000ef          	jal	10080 <main>
+   1006c:	008000ef          	jal	10074 <main>
 
-0001007c <hang>:
+00010070 <hang>:
      * 5. Safy net (Vong lap chet)
      * ---------------------------------------------------------------- */
     /* Nếu hàm main() bị return, CPU sẽ rớt xuống đây và kẹt lại, 
        tránh chay sang vùng nhớ rác gây undefined behavior */
 hang:
     j hang
-   1007c:	0000006f          	j	1007c <hang>
+   10070:	0000006f          	j	10070 <hang>
 
-00010080 <main>:
+00010074 <main>:
 #endif
 
 extern void trap_entry(void);
 
 int main(void)
 {
-   10080:	fd010113          	addi	sp,sp,-48
+   10074:	fd010113          	addi	sp,sp,-48
     __asm__ volatile("csrw mtvec, %0" :: "r"(trap_entry));
-   10084:	000117b7          	lui	a5,0x11
+   10078:	000117b7          	lui	a5,0x11
 {
-   10088:	02112623          	sw	ra,44(sp)
-   1008c:	02812423          	sw	s0,40(sp)
+   1007c:	02112623          	sw	ra,44(sp)
+   10080:	02812423          	sw	s0,40(sp)
     __asm__ volatile("csrw mtvec, %0" :: "r"(trap_entry));
-   10090:	a7078793          	addi	a5,a5,-1424 # 10a70 <trap_entry>
-   10094:	30579073          	csrw	mtvec,a5
+   10084:	c6078793          	addi	a5,a5,-928 # 10c60 <trap_entry>
+   10088:	30579073          	csrw	mtvec,a5
 
 #if CONFIG_HAS_SYSCON
     syscon_init_clocks();
-   10098:	704000ef          	jal	1079c <syscon_init_clocks>
-#endif
+   1008c:	73c000ef          	jal	107c8 <syscon_init_clocks>
 
 #if CONFIG_HAS_FPU
     __asm__ volatile("csrs mstatus, %0" :: "r"(0x6000));
-   1009c:	000067b7          	lui	a5,0x6
-   100a0:	3007a073          	csrs	mstatus,a5
 #endif
 
     plic_set_threshold(0);
-   100a4:	00000513          	li	a0,0
-   100a8:	57c000ef          	jal	10624 <plic_set_threshold>
+   10090:	00000513          	li	a0,0
+   10094:	5bc000ef          	jal	10650 <plic_set_threshold>
 
     HAL_GPIO_Init(GPIO0, &GPIO_InitStruct);
 #endif
 
 #if CONFIG_HAS_UART
     huart0.Instance = UART0;
-   100ac:	20000437          	lui	s0,0x20000
-   100b0:	00040413          	mv	s0,s0
+   10098:	20000437          	lui	s0,0x20000
+   1009c:	00040413          	mv	s0,s0
 
     HAL_UART_Init(&huart0, UART_CLK, 115200);
-   100b4:	0001c637          	lui	a2,0x1c
-   100b8:	05f5e5b7          	lui	a1,0x5f5e
+   100a0:	0001c637          	lui	a2,0x1c
+   100a4:	05f5e5b7          	lui	a1,0x5f5e
     huart0.Instance = UART0;
-   100bc:	400007b7          	lui	a5,0x40000
+   100a8:	400007b7          	lui	a5,0x40000
     HAL_UART_Init(&huart0, UART_CLK, 115200);
-   100c0:	20060613          	addi	a2,a2,512 # 1c200 <_etext+0xb6d4>
-   100c4:	00040513          	mv	a0,s0
-   100c8:	10058593          	addi	a1,a1,256 # 5f5e100 <_etext+0x5f4d5d4>
+   100ac:	20060613          	addi	a2,a2,512 # 1c200 <_etext+0xaf94>
+   100b0:	00040513          	mv	a0,s0
+   100b4:	10058593          	addi	a1,a1,256 # 5f5e100 <_edtcm+0x5f3a100>
     huart0.Instance = UART0;
-   100cc:	00f42023          	sw	a5,0(s0) # 20000000 <huart0>
+   100b8:	00f42023          	sw	a5,0(s0) # 20000000 <huart0>
     HAL_UART_Init(&huart0, UART_CLK, 115200);
-   100d0:	7a0000ef          	jal	10870 <HAL_UART_Init>
+   100bc:	1a9000ef          	jal	10a64 <HAL_UART_Init>
 
     plic_set_priority(IRQ_UART, 7);
-   100d4:	00700593          	li	a1,7
-   100d8:	00100513          	li	a0,1
-   100dc:	4f4000ef          	jal	105d0 <plic_set_priority>
+   100c0:	00700593          	li	a1,7
+   100c4:	00100513          	li	a0,1
+   100c8:	534000ef          	jal	105fc <plic_set_priority>
     plic_enable_interrupt(IRQ_UART);
-   100e0:	00100513          	li	a0,1
-   100e4:	504000ef          	jal	105e8 <plic_enable_interrupt>
+   100cc:	00100513          	li	a0,1
+   100d0:	544000ef          	jal	10614 <plic_enable_interrupt>
 
     uint8_t test_msg[] = "HELLO RISC-V UART TEST!\n";
-   100e8:	000117b7          	lui	a5,0x11
-   100ec:	b1078793          	addi	a5,a5,-1264 # 10b10 <trap_entry+0xa0>
-   100f0:	0007ae03          	lw	t3,0(a5)
-   100f4:	0047a303          	lw	t1,4(a5)
-   100f8:	0087a883          	lw	a7,8(a5)
-   100fc:	00c7a803          	lw	a6,12(a5)
-   10100:	0107a683          	lw	a3,16(a5)
-   10104:	0147a703          	lw	a4,20(a5)
-   10108:	0187c783          	lbu	a5,24(a5)
+   100d4:	000117b7          	lui	a5,0x11
+   100d8:	0ec78793          	addi	a5,a5,236 # 110ec <__udivdi3+0x3ec>
+   100dc:	0007ae03          	lw	t3,0(a5)
+   100e0:	0047a303          	lw	t1,4(a5)
+   100e4:	0087a883          	lw	a7,8(a5)
+   100e8:	00c7a803          	lw	a6,12(a5)
+   100ec:	0107a683          	lw	a3,16(a5)
+   100f0:	0147a703          	lw	a4,20(a5)
+   100f4:	0187c783          	lbu	a5,24(a5)
 
     HAL_UART_Transmit(&huart0, test_msg, sizeof(test_msg) - 1);
-   1010c:	00040513          	mv	a0,s0
-   10110:	00410593          	addi	a1,sp,4
-   10114:	01800613          	li	a2,24
+   100f8:	00040513          	mv	a0,s0
+   100fc:	00410593          	addi	a1,sp,4
+   10100:	01800613          	li	a2,24
     uint8_t test_msg[] = "HELLO RISC-V UART TEST!\n";
-   10118:	00f10e23          	sb	a5,28(sp)
-   1011c:	01c12223          	sw	t3,4(sp)
-   10120:	00612423          	sw	t1,8(sp)
-   10124:	01112623          	sw	a7,12(sp)
-   10128:	01012823          	sw	a6,16(sp)
-   1012c:	00d12a23          	sw	a3,20(sp)
-   10130:	00e12c23          	sw	a4,24(sp)
+   10104:	00f10e23          	sb	a5,28(sp)
+   10108:	01c12223          	sw	t3,4(sp)
+   1010c:	00612423          	sw	t1,8(sp)
+   10110:	01112623          	sw	a7,12(sp)
+   10114:	01012823          	sw	a6,16(sp)
+   10118:	00d12a23          	sw	a3,20(sp)
+   1011c:	00e12c23          	sw	a4,24(sp)
     HAL_UART_Transmit(&huart0, test_msg, sizeof(test_msg) - 1);
-   10134:	77c000ef          	jal	108b0 <HAL_UART_Transmit>
+   10120:	185000ef          	jal	10aa4 <HAL_UART_Transmit>
 #endif
 
     __asm__ volatile("csrs mie, %0" ::"r"(0x800));
-   10138:	000017b7          	lui	a5,0x1
-   1013c:	80078793          	addi	a5,a5,-2048 # 800 <_start-0xf800>
-   10140:	3047a073          	csrs	mie,a5
+   10124:	000017b7          	lui	a5,0x1
+   10128:	80078793          	addi	a5,a5,-2048 # 800 <_start-0xf800>
+   1012c:	3047a073          	csrs	mie,a5
     __asm__ volatile("csrs mstatus, %0" ::"r"(0x8));
-   10144:	00800793          	li	a5,8
-   10148:	3007a073          	csrs	mstatus,a5
+   10130:	00800793          	li	a5,8
+   10134:	3007a073          	csrs	mstatus,a5
 
     while (1)
     {
         __asm__ volatile("wfi");
-   1014c:	10500073          	wfi
-   10150:	10500073          	wfi
+   10138:	10500073          	wfi
+   1013c:	10500073          	wfi
     while (1)
-   10154:	ff9ff06f          	j	1014c <main+0xcc>
+   10140:	ff9ff06f          	j	10138 <main+0xc4>
 
-00010158 <clint_init>:
+00010144 <clint_init>:
 #include "clint.h"
 
 void clint_init(void) {
     CLINT_MTIMECMP_HI = 0xFFFFFFFF;
-   10158:	020047b7          	lui	a5,0x2004
-   1015c:	fff00713          	li	a4,-1
-   10160:	00e7a223          	sw	a4,4(a5) # 2004004 <_etext+0x1ff34d8>
-   10164:	020047b7          	lui	a5,0x2004
+   10144:	020047b7          	lui	a5,0x2004
+   10148:	fff00713          	li	a4,-1
+   1014c:	00e7a223          	sw	a4,4(a5) # 2004004 <_edtcm+0x1fe0004>
+   10150:	020047b7          	lui	a5,0x2004
     CLINT_MTIMECMP_LO = 0xFFFFFFFF;
-   10168:	00e7a023          	sw	a4,0(a5) # 2004000 <_etext+0x1ff34d4>
+   10154:	00e7a023          	sw	a4,0(a5) # 2004000 <_edtcm+0x1fe0000>
     CLINT_MSIP = 0;
-   1016c:	020007b7          	lui	a5,0x2000
-   10170:	0007a023          	sw	zero,0(a5) # 2000000 <_etext+0x1fef4d4>
+   10158:	020007b7          	lui	a5,0x2000
+   1015c:	0007a023          	sw	zero,0(a5) # 2000000 <_edtcm+0x1fdc000>
 }
-   10174:	00008067          	ret
+   10160:	00008067          	ret
 
-00010178 <clint_get_mtime>:
+00010164 <clint_get_mtime>:
 
 uint64_t clint_get_mtime(void) {
     uint32_t mtime_hi, mtime_lo;
     do {
         mtime_hi = CLINT_MTIME_HI;
-   10178:	0200c7b7          	lui	a5,0x200c
+   10164:	0200c7b7          	lui	a5,0x200c
         mtime_lo = CLINT_MTIME_LO;
-   1017c:	0200c6b7          	lui	a3,0x200c
+   10168:	0200c6b7          	lui	a3,0x200c
         mtime_hi = CLINT_MTIME_HI;
-   10180:	ffc78793          	addi	a5,a5,-4 # 200bffc <_etext+0x1ffb4d0>
+   1016c:	ffc78793          	addi	a5,a5,-4 # 200bffc <_edtcm+0x1fe7ffc>
         mtime_lo = CLINT_MTIME_LO;
-   10184:	ff868693          	addi	a3,a3,-8 # 200bff8 <_etext+0x1ffb4cc>
+   10170:	ff868693          	addi	a3,a3,-8 # 200bff8 <_edtcm+0x1fe7ff8>
         mtime_hi = CLINT_MTIME_HI;
-   10188:	0007a703          	lw	a4,0(a5)
+   10174:	0007a703          	lw	a4,0(a5)
         mtime_lo = CLINT_MTIME_LO;
-   1018c:	0006a503          	lw	a0,0(a3)
+   10178:	0006a503          	lw	a0,0(a3)
     } while (mtime_hi != CLINT_MTIME_HI); 
-   10190:	0007a583          	lw	a1,0(a5)
-   10194:	fee59ae3          	bne	a1,a4,10188 <clint_get_mtime+0x10>
+   1017c:	0007a583          	lw	a1,0(a5)
+   10180:	fee59ae3          	bne	a1,a4,10174 <clint_get_mtime+0x10>
     
     return (((uint64_t)mtime_hi) << 32) | mtime_lo;
 }
-   10198:	00008067          	ret
+   10184:	00008067          	ret
 
-0001019c <clint_set_timer_ms>:
-        mtime_hi = CLINT_MTIME_HI;
-   1019c:	0200c7b7          	lui	a5,0x200c
-        mtime_lo = CLINT_MTIME_LO;
-   101a0:	0200c837          	lui	a6,0x200c
-        mtime_hi = CLINT_MTIME_HI;
-   101a4:	ffc78793          	addi	a5,a5,-4 # 200bffc <_etext+0x1ffb4d0>
-        mtime_lo = CLINT_MTIME_LO;
-   101a8:	ff880813          	addi	a6,a6,-8 # 200bff8 <_etext+0x1ffb4cc>
-        mtime_hi = CLINT_MTIME_HI;
-   101ac:	0007a703          	lw	a4,0(a5)
-        mtime_lo = CLINT_MTIME_LO;
-   101b0:	00082603          	lw	a2,0(a6)
-    } while (mtime_hi != CLINT_MTIME_HI); 
-   101b4:	0007a683          	lw	a3,0(a5)
-   101b8:	fed71ae3          	bne	a4,a3,101ac <clint_set_timer_ms+0x10>
+00010188 <clint_set_timer_ms>:
 
 void clint_set_timer_ms(uint32_t ms, uint32_t timer_freq_hz) {
-    uint64_t current_time = clint_get_mtime();
-    
-    uint32_t ticks_per_ms = timer_freq_hz / 1000;
-   101bc:	106257b7          	lui	a5,0x10625
-   101c0:	dd378793          	addi	a5,a5,-557 # 10624dd3 <_etext+0x106142a7>
-   101c4:	02f5b5b3          	mulhu	a1,a1,a5
-    uint64_t target = current_time + ((uint64_t)ms * ticks_per_ms);
+   10188:	ff010113          	addi	sp,sp,-16
+        mtime_hi = CLINT_MTIME_HI;
+   1018c:	0200c7b7          	lui	a5,0x200c
+        mtime_lo = CLINT_MTIME_LO;
+   10190:	0200c6b7          	lui	a3,0x200c
+void clint_set_timer_ms(uint32_t ms, uint32_t timer_freq_hz) {
+   10194:	00112623          	sw	ra,12(sp)
+   10198:	00812423          	sw	s0,8(sp)
+   1019c:	00912223          	sw	s1,4(sp)
+        mtime_hi = CLINT_MTIME_HI;
+   101a0:	ffc78793          	addi	a5,a5,-4 # 200bffc <_edtcm+0x1fe7ffc>
+        mtime_lo = CLINT_MTIME_LO;
+   101a4:	ff868693          	addi	a3,a3,-8 # 200bff8 <_edtcm+0x1fe7ff8>
+        mtime_hi = CLINT_MTIME_HI;
+   101a8:	0007a403          	lw	s0,0(a5)
+        mtime_lo = CLINT_MTIME_LO;
+   101ac:	0006a483          	lw	s1,0(a3)
+    } while (mtime_hi != CLINT_MTIME_HI); 
+   101b0:	0007a703          	lw	a4,0(a5)
+   101b4:	fee41ae3          	bne	s0,a4,101a8 <clint_set_timer_ms+0x20>
+    /* Nhan truoc, chia sau. timer_freq_hz o day la RTC_CLOCK_HZ = 32768, nen
+       `timer_freq_hz / 1000` bi cat con 32 -> sai so 2.3% moi lan hen gio va
+       don lai theo tung tick. Voi tan so < 1 MHz phep chia truoc la khong dung
+       duoc. Tich lon nhat ~ 2^32 * 2^32 nen phai lam trong 64-bit. */
+    uint64_t target = current_time +
+                      (((uint64_t)ms * (uint64_t)timer_freq_hz) / 1000u);
+   101b8:	02b537b3          	mulhu	a5,a0,a1
+   101bc:	3e800613          	li	a2,1000
+   101c0:	00000693          	li	a3,0
+   101c4:	02b50533          	mul	a0,a0,a1
+   101c8:	00078593          	mv	a1,a5
+   101cc:	335000ef          	jal	10d00 <__udivdi3>
 
     CLINT_MTIMECMP_HI = 0xFFFFFFFF; 
-   101c8:	020046b7          	lui	a3,0x2004
-   101cc:	fff00793          	li	a5,-1
-   101d0:	00f6a223          	sw	a5,4(a3) # 2004004 <_etext+0x1ff34d8>
-    uint32_t ticks_per_ms = timer_freq_hz / 1000;
-   101d4:	0065d593          	srli	a1,a1,0x6
-    uint64_t target = current_time + ((uint64_t)ms * ticks_per_ms);
-   101d8:	02a587b3          	mul	a5,a1,a0
-   101dc:	02a5b5b3          	mulhu	a1,a1,a0
-   101e0:	00c78633          	add	a2,a5,a2
-   101e4:	00f637b3          	sltu	a5,a2,a5
+   101d0:	020047b7          	lui	a5,0x2004
+    uint64_t target = current_time +
+   101d4:	009504b3          	add	s1,a0,s1
+    CLINT_MTIMECMP_HI = 0xFFFFFFFF; 
+   101d8:	fff00713          	li	a4,-1
+   101dc:	00e7a223          	sw	a4,4(a5) # 2004004 <_edtcm+0x1fe0004>
     CLINT_MTIMECMP_LO = (uint32_t)(target & 0xFFFFFFFF);
-   101e8:	00c6a023          	sw	a2,0(a3)
-    uint64_t target = current_time + ((uint64_t)ms * ticks_per_ms);
-   101ec:	00e585b3          	add	a1,a1,a4
-   101f0:	00b787b3          	add	a5,a5,a1
     CLINT_MTIMECMP_HI = (uint32_t)(target >> 32);
-   101f4:	00f6a223          	sw	a5,4(a3)
 }
-   101f8:	00008067          	ret
+   101e0:	00c12083          	lw	ra,12(sp)
+    uint64_t target = current_time +
+   101e4:	00a4b533          	sltu	a0,s1,a0
+   101e8:	008585b3          	add	a1,a1,s0
+}
+   101ec:	00812403          	lw	s0,8(sp)
+    CLINT_MTIMECMP_LO = (uint32_t)(target & 0xFFFFFFFF);
+   101f0:	0097a023          	sw	s1,0(a5)
+    uint64_t target = current_time +
+   101f4:	00b50533          	add	a0,a0,a1
+    CLINT_MTIMECMP_HI = (uint32_t)(target >> 32);
+   101f8:	00a7a223          	sw	a0,4(a5)
+}
+   101fc:	00412483          	lw	s1,4(sp)
+   10200:	01010113          	addi	sp,sp,16
+   10204:	00008067          	ret
 
-000101fc <clint_trigger_soft_irq>:
+00010208 <clint_trigger_soft_irq>:
 
 void clint_trigger_soft_irq(void) {
     CLINT_MSIP = 1;
-   101fc:	020007b7          	lui	a5,0x2000
-   10200:	00100713          	li	a4,1
-   10204:	00e7a023          	sw	a4,0(a5) # 2000000 <_etext+0x1fef4d4>
-}
-   10208:	00008067          	ret
-
-0001020c <clint_clear_soft_irq>:
-
-void clint_clear_soft_irq(void) {
-    CLINT_MSIP = 0;
-   1020c:	020007b7          	lui	a5,0x2000
-   10210:	0007a023          	sw	zero,0(a5) # 2000000 <_etext+0x1fef4d4>
+   10208:	020007b7          	lui	a5,0x2000
+   1020c:	00100713          	li	a4,1
+   10210:	00e7a023          	sw	a4,0(a5) # 2000000 <_edtcm+0x1fdc000>
 }
    10214:	00008067          	ret
 
-00010218 <HAL_Delay>:
-        mtime_hi = CLINT_MTIME_HI;
-   10218:	0200c7b7          	lui	a5,0x200c
-        mtime_lo = CLINT_MTIME_LO;
-   1021c:	0200c6b7          	lui	a3,0x200c
-        mtime_hi = CLINT_MTIME_HI;
-   10220:	ffc78793          	addi	a5,a5,-4 # 200bffc <_etext+0x1ffb4d0>
-        mtime_lo = CLINT_MTIME_LO;
-   10224:	ff868693          	addi	a3,a3,-8 # 200bff8 <_etext+0x1ffb4cc>
-        mtime_hi = CLINT_MTIME_HI;
-   10228:	0007a803          	lw	a6,0(a5)
-        mtime_lo = CLINT_MTIME_LO;
-   1022c:	0006a883          	lw	a7,0(a3)
-    } while (mtime_hi != CLINT_MTIME_HI); 
-   10230:	0007a703          	lw	a4,0(a5)
-   10234:	fee81ae3          	bne	a6,a4,10228 <HAL_Delay+0x10>
+00010218 <clint_clear_soft_irq>:
+
+void clint_clear_soft_irq(void) {
+    CLINT_MSIP = 0;
+   10218:	020007b7          	lui	a5,0x2000
+   1021c:	0007a023          	sw	zero,0(a5) # 2000000 <_edtcm+0x1fdc000>
+}
+   10220:	00008067          	ret
+
+00010224 <HAL_Delay>:
 
 void HAL_Delay(uint32_t ms, uint32_t timer_freq_hz) {
-    uint64_t start_time = clint_get_mtime();
-    
-    uint32_t ticks_per_ms = timer_freq_hz / 1000;
-   10238:	106257b7          	lui	a5,0x10625
-   1023c:	dd378793          	addi	a5,a5,-557 # 10624dd3 <_etext+0x106142a7>
-   10240:	02f5b7b3          	mulhu	a5,a1,a5
+   10224:	ff010113          	addi	sp,sp,-16
         mtime_hi = CLINT_MTIME_HI;
-   10244:	0200c737          	lui	a4,0x200c
+   10228:	0200c7b7          	lui	a5,0x200c
         mtime_lo = CLINT_MTIME_LO;
-   10248:	0200c5b7          	lui	a1,0x200c
+   1022c:	0200c6b7          	lui	a3,0x200c
+void HAL_Delay(uint32_t ms, uint32_t timer_freq_hz) {
+   10230:	00112623          	sw	ra,12(sp)
+   10234:	00812423          	sw	s0,8(sp)
+   10238:	00912223          	sw	s1,4(sp)
         mtime_hi = CLINT_MTIME_HI;
-   1024c:	ffc70713          	addi	a4,a4,-4 # 200bffc <_etext+0x1ffb4d0>
+   1023c:	ffc78793          	addi	a5,a5,-4 # 200bffc <_edtcm+0x1fe7ffc>
         mtime_lo = CLINT_MTIME_LO;
-   10250:	ff858593          	addi	a1,a1,-8 # 200bff8 <_etext+0x1ffb4cc>
-    uint32_t ticks_per_ms = timer_freq_hz / 1000;
-   10254:	0067d793          	srli	a5,a5,0x6
-    uint64_t ticks_to_wait = (uint64_t)ms * ticks_per_ms;
-   10258:	02a78333          	mul	t1,a5,a0
-   1025c:	02a7b533          	mulhu	a0,a5,a0
+   10240:	ff868693          	addi	a3,a3,-8 # 200bff8 <_edtcm+0x1fe7ff8>
         mtime_hi = CLINT_MTIME_HI;
-   10260:	00072783          	lw	a5,0(a4)
+   10244:	0007a403          	lw	s0,0(a5)
         mtime_lo = CLINT_MTIME_LO;
-   10264:	0005a603          	lw	a2,0(a1)
+   10248:	0006a483          	lw	s1,0(a3)
     } while (mtime_hi != CLINT_MTIME_HI); 
-   10268:	00072683          	lw	a3,0(a4)
-   1026c:	fed79ae3          	bne	a5,a3,10260 <HAL_Delay+0x48>
+   1024c:	0007a703          	lw	a4,0(a5)
+   10250:	fee41ae3          	bne	s0,a4,10244 <HAL_Delay+0x20>
+    uint64_t start_time = clint_get_mtime();
+
+    /* Nhan truoc, chia sau - cung ly do nhu clint_set_timer_ms. */
+    uint64_t ticks_to_wait = ((uint64_t)ms * (uint64_t)timer_freq_hz) / 1000u;
+   10254:	02b537b3          	mulhu	a5,a0,a1
+   10258:	3e800613          	li	a2,1000
+   1025c:	00000693          	li	a3,0
+   10260:	02b50533          	mul	a0,a0,a1
+   10264:	00078593          	mv	a1,a5
+   10268:	299000ef          	jal	10d00 <__udivdi3>
+        mtime_hi = CLINT_MTIME_HI;
+   1026c:	0200c737          	lui	a4,0x200c
+        mtime_lo = CLINT_MTIME_LO;
+   10270:	0200c837          	lui	a6,0x200c
+        mtime_hi = CLINT_MTIME_HI;
+   10274:	ffc70713          	addi	a4,a4,-4 # 200bffc <_edtcm+0x1fe7ffc>
+        mtime_lo = CLINT_MTIME_LO;
+   10278:	ff880813          	addi	a6,a6,-8 # 200bff8 <_edtcm+0x1fe7ff8>
+        mtime_hi = CLINT_MTIME_HI;
+   1027c:	00072783          	lw	a5,0(a4)
+        mtime_lo = CLINT_MTIME_LO;
+   10280:	00082603          	lw	a2,0(a6)
+    } while (mtime_hi != CLINT_MTIME_HI); 
+   10284:	00072683          	lw	a3,0(a4)
+   10288:	fed79ae3          	bne	a5,a3,1027c <HAL_Delay+0x58>
     
     while ((clint_get_mtime() - start_time) < ticks_to_wait) {
-   10270:	411606b3          	sub	a3,a2,a7
-   10274:	410787b3          	sub	a5,a5,a6
-   10278:	00d63633          	sltu	a2,a2,a3
-   1027c:	40c787b3          	sub	a5,a5,a2
-   10280:	00a7f663          	bgeu	a5,a0,1028c <HAL_Delay+0x74>
+   1028c:	409606b3          	sub	a3,a2,s1
+   10290:	408787b3          	sub	a5,a5,s0
+   10294:	00d63633          	sltu	a2,a2,a3
+   10298:	40c787b3          	sub	a5,a5,a2
+   1029c:	00b7f663          	bgeu	a5,a1,102a8 <HAL_Delay+0x84>
         __asm__ volatile ("nop"); 
-   10284:	00000013          	nop
+   102a0:	00000013          	nop
 uint64_t clint_get_mtime(void) {
-   10288:	fd9ff06f          	j	10260 <HAL_Delay+0x48>
+   102a4:	fd9ff06f          	j	1027c <HAL_Delay+0x58>
     while ((clint_get_mtime() - start_time) < ticks_to_wait) {
-   1028c:	00f51463          	bne	a0,a5,10294 <HAL_Delay+0x7c>
-   10290:	fe66eae3          	bltu	a3,t1,10284 <HAL_Delay+0x6c>
+   102a8:	00f59463          	bne	a1,a5,102b0 <HAL_Delay+0x8c>
+   102ac:	fea6eae3          	bltu	a3,a0,102a0 <HAL_Delay+0x7c>
     }
-   10294:	00008067          	ret
+   102b0:	00c12083          	lw	ra,12(sp)
+   102b4:	00812403          	lw	s0,8(sp)
+   102b8:	00412483          	lw	s1,4(sp)
+   102bc:	01010113          	addi	sp,sp,16
+   102c0:	00008067          	ret
 
-00010298 <HAL_DMA_Init>:
+000102c4 <HAL_DMA_Init>:
 #include "dma.h"
 
 // Reset toàn bộ DMA về trạng thái ban đầu
 void HAL_DMA_Init(void) {
     // Ghi bit reset để clear toàn bộ logic bên trong
     DMA_GLOBAL_CTRL = 1;
-   10298:	400097b7          	lui	a5,0x40009
-   1029c:	00100713          	li	a4,1
-   102a0:	f0e7a023          	sw	a4,-256(a5) # 40008f00 <_estack+0x1ffe8f00>
+   102c4:	400097b7          	lui	a5,0x40009
+   102c8:	00100713          	li	a4,1
+   102cc:	f0e7a023          	sw	a4,-256(a5) # 40008f00 <_estack+0x1ffe8f00>
 }
-   102a4:	00008067          	ret
+   102d0:	00008067          	ret
 
-000102a8 <HAL_DMA_Config>:
+000102d4 <HAL_DMA_Config>:
 // Cấu hình cho 1 channel DMA trước khi chạy
 void HAL_DMA_Config(DMA_Channel_TypeDef *dma_ch, uint32_t src, uint32_t dst, uint16_t len, 
                     uint8_t src_inc, uint8_t dst_inc, uint8_t burst_size, uint8_t periph_num) {
     
     // Nếu chưa cấp phát channel thì thôi
     if (dma_ch == NULL) return;
-   102a8:	04050263          	beqz	a0,102ec <HAL_DMA_Config+0x44>
+   102d4:	04050263          	beqz	a0,10318 <HAL_DMA_Config+0x44>
 
     // Set địa chỉ nguồn và đích
     dma_ch->SRC_ADDR = src;
-   102ac:	00b52023          	sw	a1,0(a0)
+   102d8:	00b52023          	sw	a1,0(a0)
     dma_ch->DST_ADDR = dst;
-   102b0:	00c52223          	sw	a2,4(a0)
+   102dc:	00c52223          	sw	a2,4(a0)
     
     // Set độ dài cần copy
     dma_ch->LEN = len;
-   102b4:	00d52423          	sw	a3,8(a0)
+   102e0:	00d52423          	sw	a3,8(a0)
 
     // Build giá trị thanh ghi control
     uint32_t ctrl_val = 0;
     
     // Giới hạn burst để tránh vượt quá phần cứng hỗ trợ
     if (burst_size > 64) burst_size = 64;
-   102b8:	04000613          	li	a2,64
-   102bc:	0ff87693          	zext.b	a3,a6
-   102c0:	03066863          	bltu	a2,a6,102f0 <HAL_DMA_Config+0x48>
+   102e4:	04000613          	li	a2,64
+   102e8:	0ff87693          	zext.b	a3,a6
+   102ec:	03066863          	bltu	a2,a6,1031c <HAL_DMA_Config+0x48>
     ctrl_val |= (burst_size << DMA_CTRL_BURST_Pos);
-   102c4:	00169693          	slli	a3,a3,0x1
+   102f0:	00169693          	slli	a3,a3,0x1
     
     // Bật auto increment nếu cần
     if (src_inc) ctrl_val |= DMA_CTRL_SRC_INCR_Msk;
-   102c8:	00070463          	beqz	a4,102d0 <HAL_DMA_Config+0x28>
-   102cc:	1006e693          	ori	a3,a3,256
+   102f4:	00070463          	beqz	a4,102fc <HAL_DMA_Config+0x28>
+   102f8:	1006e693          	ori	a3,a3,256
     if (dst_inc) ctrl_val |= DMA_CTRL_DST_INCR_Msk;
-   102d0:	00078463          	beqz	a5,102d8 <HAL_DMA_Config+0x30>
-   102d4:	2006e693          	ori	a3,a3,512
+   102fc:	00078463          	beqz	a5,10304 <HAL_DMA_Config+0x30>
+   10300:	2006e693          	ori	a3,a3,512
     
     // Chọn peripheral nếu có dùng
     ctrl_val |= (periph_num << DMA_CTRL_PERIPH_Pos);
-   102d8:	00a89893          	slli	a7,a7,0xa
-   102dc:	00d8e8b3          	or	a7,a7,a3
+   10304:	00a89893          	slli	a7,a7,0xa
+   10308:	00d8e8b3          	or	a7,a7,a3
 
     // Ghi cấu hình (chưa start)
     dma_ch->CTRL = ctrl_val;
-   102e0:	01152623          	sw	a7,12(a0)
+   1030c:	01152623          	sw	a7,12(a0)
 
     // Mặc định bật interrupt khi done hoặc lỗi
     dma_ch->INT_EN = DMA_INT_DONE | DMA_INT_ERR;
-   102e4:	00300793          	li	a5,3
-   102e8:	00f52a23          	sw	a5,20(a0)
+   10310:	00300793          	li	a5,3
+   10314:	00f52a23          	sw	a5,20(a0)
 }
-   102ec:	00008067          	ret
+   10318:	00008067          	ret
     if (burst_size > 64) burst_size = 64;
-   102f0:	0ff67693          	zext.b	a3,a2
+   1031c:	0ff67693          	zext.b	a3,a2
     ctrl_val |= (burst_size << DMA_CTRL_BURST_Pos);
-   102f4:	00169693          	slli	a3,a3,0x1
+   10320:	00169693          	slli	a3,a3,0x1
     if (src_inc) ctrl_val |= DMA_CTRL_SRC_INCR_Msk;
-   102f8:	fc070ce3          	beqz	a4,102d0 <HAL_DMA_Config+0x28>
-   102fc:	fd1ff06f          	j	102cc <HAL_DMA_Config+0x24>
+   10324:	fc070ce3          	beqz	a4,102fc <HAL_DMA_Config+0x28>
+   10328:	fd1ff06f          	j	102f8 <HAL_DMA_Config+0x24>
 
-00010300 <HAL_DMA_Start>:
+0001032c <HAL_DMA_Start>:
 
 // Bắt đầu truyền DMA
 void HAL_DMA_Start(DMA_Channel_TypeDef *dma_ch) {
     if (dma_ch == NULL) return;
-   10300:	00050863          	beqz	a0,10310 <HAL_DMA_Start+0x10>
+   1032c:	00050863          	beqz	a0,1033c <HAL_DMA_Start+0x10>
     
     // Set bit START để kick DMA
     dma_ch->CTRL |= DMA_CTRL_START_Msk;
-   10304:	00c52783          	lw	a5,12(a0)
-   10308:	0017e793          	ori	a5,a5,1
-   1030c:	00f52623          	sw	a5,12(a0)
+   10330:	00c52783          	lw	a5,12(a0)
+   10334:	0017e793          	ori	a5,a5,1
+   10338:	00f52623          	sw	a5,12(a0)
 }
-   10310:	00008067          	ret
+   1033c:	00008067          	ret
 
-00010314 <HAL_DMA_Wait_Done>:
+00010340 <HAL_DMA_Wait_Done>:
 
 // Chờ DMA chạy xong (polling)
 void HAL_DMA_Wait_Done(DMA_Channel_TypeDef *dma_ch) {
     if (dma_ch == NULL) return;
-   10314:	00050c63          	beqz	a0,1032c <HAL_DMA_Wait_Done+0x18>
+   10340:	00050c63          	beqz	a0,10358 <HAL_DMA_Wait_Done+0x18>
 
     // Loop cho đến khi DONE = 1
     while ((dma_ch->STATUS & (1 << 1)) == 0) {
-   10318:	01052783          	lw	a5,16(a0)
-   1031c:	0027f793          	andi	a5,a5,2
-   10320:	fe078ce3          	beqz	a5,10318 <HAL_DMA_Wait_Done+0x4>
+   10344:	01052783          	lw	a5,16(a0)
+   10348:	0027f793          	andi	a5,a5,2
+   1034c:	fe078ce3          	beqz	a5,10344 <HAL_DMA_Wait_Done+0x4>
     }
 
     // Clear cờ DONE (W1C)
     dma_ch->INT_STAT = DMA_INT_DONE;
-   10324:	00100793          	li	a5,1
-   10328:	00f52c23          	sw	a5,24(a0)
+   10350:	00100793          	li	a5,1
+   10354:	00f52c23          	sw	a5,24(a0)
 }
-   1032c:	00008067          	ret
+   10358:	00008067          	ret
 
-00010330 <HAL_DMA_TransferCompleteCallback>:
+0001035c <HAL_DMA_TransferCompleteCallback>:
     }
 }
 
 // Callback mặc định (có thể override ở file khác)
 __attribute__((weak)) void HAL_DMA_TransferCompleteCallback(DMA_Channel_TypeDef *dma_ch) {
-   10330:	00008067          	ret
-
-00010334 <HAL_DMA_IRQHandler>:
-    if (dma_ch == NULL) return;
-   10334:	02050463          	beqz	a0,1035c <HAL_DMA_IRQHandler+0x28>
-    if (dma_ch->INT_STAT & DMA_INT_DONE) {
-   10338:	01852703          	lw	a4,24(a0)
-   1033c:	00177713          	andi	a4,a4,1
-   10340:	02071063          	bnez	a4,10360 <HAL_DMA_IRQHandler+0x2c>
-    if (dma_ch->INT_STAT & DMA_INT_ERR) {
-   10344:	01852703          	lw	a4,24(a0)
-   10348:	00277713          	andi	a4,a4,2
-   1034c:	00070863          	beqz	a4,1035c <HAL_DMA_IRQHandler+0x28>
-        dma_ch->INT_STAT = DMA_INT_ERR;
-   10350:	00200713          	li	a4,2
-   10354:	00e52c23          	sw	a4,24(a0)
-   10358:	00008067          	ret
    1035c:	00008067          	ret
-        dma_ch->INT_STAT = DMA_INT_DONE;
-   10360:	00100713          	li	a4,1
-void HAL_DMA_IRQHandler(DMA_Channel_TypeDef *dma_ch) {
-   10364:	fe010113          	addi	sp,sp,-32
-        dma_ch->INT_STAT = DMA_INT_DONE;
-   10368:	00e52c23          	sw	a4,24(a0)
-void HAL_DMA_IRQHandler(DMA_Channel_TypeDef *dma_ch) {
-   1036c:	00112e23          	sw	ra,28(sp)
-        dma_ch->INT_STAT = DMA_INT_DONE;
-   10370:	00a12623          	sw	a0,12(sp)
-        HAL_DMA_TransferCompleteCallback(dma_ch);
-   10374:	fbdff0ef          	jal	10330 <HAL_DMA_TransferCompleteCallback>
-   10378:	00c12783          	lw	a5,12(sp)
-    if (dma_ch->INT_STAT & DMA_INT_ERR) {
-   1037c:	0187a703          	lw	a4,24(a5)
-   10380:	00277713          	andi	a4,a4,2
-   10384:	00070663          	beqz	a4,10390 <HAL_DMA_IRQHandler+0x5c>
-        dma_ch->INT_STAT = DMA_INT_ERR;
-   10388:	00200713          	li	a4,2
-   1038c:	00e7ac23          	sw	a4,24(a5)
-}
-   10390:	01c12083          	lw	ra,28(sp)
-   10394:	02010113          	addi	sp,sp,32
-   10398:	00008067          	ret
 
-0001039c <HAL_GPIO_Init>:
+00010360 <HAL_DMA_IRQHandler>:
+    if (dma_ch == NULL) return;
+   10360:	02050463          	beqz	a0,10388 <HAL_DMA_IRQHandler+0x28>
+    if (dma_ch->INT_STAT & DMA_INT_DONE) {
+   10364:	01852703          	lw	a4,24(a0)
+   10368:	00177713          	andi	a4,a4,1
+   1036c:	02071063          	bnez	a4,1038c <HAL_DMA_IRQHandler+0x2c>
+    if (dma_ch->INT_STAT & DMA_INT_ERR) {
+   10370:	01852703          	lw	a4,24(a0)
+   10374:	00277713          	andi	a4,a4,2
+   10378:	00070863          	beqz	a4,10388 <HAL_DMA_IRQHandler+0x28>
+        dma_ch->INT_STAT = DMA_INT_ERR;
+   1037c:	00200713          	li	a4,2
+   10380:	00e52c23          	sw	a4,24(a0)
+   10384:	00008067          	ret
+   10388:	00008067          	ret
+        dma_ch->INT_STAT = DMA_INT_DONE;
+   1038c:	00100713          	li	a4,1
+void HAL_DMA_IRQHandler(DMA_Channel_TypeDef *dma_ch) {
+   10390:	fe010113          	addi	sp,sp,-32
+        dma_ch->INT_STAT = DMA_INT_DONE;
+   10394:	00e52c23          	sw	a4,24(a0)
+void HAL_DMA_IRQHandler(DMA_Channel_TypeDef *dma_ch) {
+   10398:	00112e23          	sw	ra,28(sp)
+        dma_ch->INT_STAT = DMA_INT_DONE;
+   1039c:	00a12623          	sw	a0,12(sp)
+        HAL_DMA_TransferCompleteCallback(dma_ch);
+   103a0:	fbdff0ef          	jal	1035c <HAL_DMA_TransferCompleteCallback>
+   103a4:	00c12783          	lw	a5,12(sp)
+    if (dma_ch->INT_STAT & DMA_INT_ERR) {
+   103a8:	0187a703          	lw	a4,24(a5)
+   103ac:	00277713          	andi	a4,a4,2
+   103b0:	00070663          	beqz	a4,103bc <HAL_DMA_IRQHandler+0x5c>
+        dma_ch->INT_STAT = DMA_INT_ERR;
+   103b4:	00200713          	li	a4,2
+   103b8:	00e7ac23          	sw	a4,24(a5)
+}
+   103bc:	01c12083          	lw	ra,28(sp)
+   103c0:	02010113          	addi	sp,sp,32
+   103c4:	00008067          	ret
+
+000103c8 <HAL_GPIO_Init>:
 
 /**
  * Khởi tạo cấu hình cho các chân GPIO
  */
 void HAL_GPIO_Init(GPIO_TypeDef *GPIOx, GPIO_InitTypeDef *GPIO_Init) {
     if (GPIOx == NULL || GPIO_Init == NULL) return;
-   1039c:	08050063          	beqz	a0,1041c <HAL_GPIO_Init+0x80>
-   103a0:	06058e63          	beqz	a1,1041c <HAL_GPIO_Init+0x80>
+   103c8:	08050063          	beqz	a0,10448 <HAL_GPIO_Init+0x80>
+   103cc:	06058e63          	beqz	a1,10448 <HAL_GPIO_Init+0x80>
 
     for (int i = 0; i < 32; i++) {
         uint32_t current_pin = (1 << i);
         
         if (GPIO_Init->Pin & current_pin) {
-   103a4:	0005a883          	lw	a7,0(a1)
+   103d0:	0005a883          	lw	a7,0(a1)
     for (int i = 0; i < 32; i++) {
-   103a8:	00000793          	li	a5,0
+   103d4:	00000793          	li	a5,0
         uint32_t current_pin = (1 << i);
-   103ac:	00100613          	li	a2,1
+   103d8:	00100613          	li	a2,1
             } 
             else if (GPIO_Init->Mode == GPIO_MODE_INPUT) {
                 GPIOx->DIR &= ~current_pin;      // set input
                 GPIOx->INT_MASK &= ~current_pin; // không dùng ngắt
             } 
             else if (GPIO_Init->Mode == GPIO_MODE_IT) {
-   103b0:	00200e13          	li	t3,2
+   103dc:	00200e13          	li	t3,2
     for (int i = 0; i < 32; i++) {
-   103b4:	02000813          	li	a6,32
-   103b8:	02c0006f          	j	103e4 <HAL_GPIO_Init+0x48>
+   103e0:	02000813          	li	a6,32
+   103e4:	02c0006f          	j	10410 <HAL_GPIO_Init+0x48>
                 GPIOx->DIR &= ~current_pin;      // set input
-   103bc:	fff74313          	not	t1,a4
+   103e8:	fff74313          	not	t1,a4
             else if (GPIO_Init->Mode == GPIO_MODE_INPUT) {
-   103c0:	06069063          	bnez	a3,10420 <HAL_GPIO_Init+0x84>
+   103ec:	06069063          	bnez	a3,1044c <HAL_GPIO_Init+0x84>
                 GPIOx->DIR &= ~current_pin;      // set input
-   103c4:	00852703          	lw	a4,8(a0)
-   103c8:	00677733          	and	a4,a4,t1
-   103cc:	00e52423          	sw	a4,8(a0)
+   103f0:	00852703          	lw	a4,8(a0)
+   103f4:	00677733          	and	a4,a4,t1
+   103f8:	00e52423          	sw	a4,8(a0)
                 GPIOx->INT_MASK &= ~current_pin; // không dùng ngắt
-   103d0:	00c52703          	lw	a4,12(a0)
-   103d4:	00e37333          	and	t1,t1,a4
-   103d8:	00652623          	sw	t1,12(a0)
+   103fc:	00c52703          	lw	a4,12(a0)
+   10400:	00e37333          	and	t1,t1,a4
+   10404:	00652623          	sw	t1,12(a0)
     for (int i = 0; i < 32; i++) {
-   103dc:	00178793          	addi	a5,a5,1
-   103e0:	03078e63          	beq	a5,a6,1041c <HAL_GPIO_Init+0x80>
+   10408:	00178793          	addi	a5,a5,1
+   1040c:	03078e63          	beq	a5,a6,10448 <HAL_GPIO_Init+0x80>
         uint32_t current_pin = (1 << i);
-   103e4:	00f61733          	sll	a4,a2,a5
+   10410:	00f61733          	sll	a4,a2,a5
         if (GPIO_Init->Pin & current_pin) {
-   103e8:	011776b3          	and	a3,a4,a7
-   103ec:	fe0688e3          	beqz	a3,103dc <HAL_GPIO_Init+0x40>
+   10414:	011776b3          	and	a3,a4,a7
+   10418:	fe0688e3          	beqz	a3,10408 <HAL_GPIO_Init+0x40>
             if (GPIO_Init->Mode == GPIO_MODE_OUTPUT) {
-   103f0:	0045a683          	lw	a3,4(a1)
-   103f4:	fcc694e3          	bne	a3,a2,103bc <HAL_GPIO_Init+0x20>
+   1041c:	0045a683          	lw	a3,4(a1)
+   10420:	fcc694e3          	bne	a3,a2,103e8 <HAL_GPIO_Init+0x20>
                 GPIOx->DIR |= current_pin;       // set output
-   103f8:	00852303          	lw	t1,8(a0)
+   10424:	00852303          	lw	t1,8(a0)
                 GPIOx->INT_MASK &= ~current_pin; // không dùng ngắt
-   103fc:	fff74693          	not	a3,a4
+   10428:	fff74693          	not	a3,a4
     for (int i = 0; i < 32; i++) {
-   10400:	00178793          	addi	a5,a5,1
+   1042c:	00178793          	addi	a5,a5,1
                 GPIOx->DIR |= current_pin;       // set output
-   10404:	00e36733          	or	a4,t1,a4
-   10408:	00e52423          	sw	a4,8(a0)
+   10430:	00e36733          	or	a4,t1,a4
+   10434:	00e52423          	sw	a4,8(a0)
                 GPIOx->INT_MASK &= ~current_pin; // không dùng ngắt
-   1040c:	00c52703          	lw	a4,12(a0)
-   10410:	00e6f733          	and	a4,a3,a4
-   10414:	00e52623          	sw	a4,12(a0)
+   10438:	00c52703          	lw	a4,12(a0)
+   1043c:	00e6f733          	and	a4,a3,a4
+   10440:	00e52623          	sw	a4,12(a0)
     for (int i = 0; i < 32; i++) {
-   10418:	fd0796e3          	bne	a5,a6,103e4 <HAL_GPIO_Init+0x48>
+   10444:	fd0796e3          	bne	a5,a6,10410 <HAL_GPIO_Init+0x48>
                 GPIOx->DIR &= ~current_pin;      // input mode
                 GPIOx->INT_MASK |= current_pin;  // bật interrupt
             }
         }
     }
 }
-   1041c:	00008067          	ret
+   10448:	00008067          	ret
             else if (GPIO_Init->Mode == GPIO_MODE_IT) {
-   10420:	fbc69ee3          	bne	a3,t3,103dc <HAL_GPIO_Init+0x40>
+   1044c:	fbc69ee3          	bne	a3,t3,10408 <HAL_GPIO_Init+0x40>
                 GPIOx->DIR &= ~current_pin;      // input mode
-   10424:	00852303          	lw	t1,8(a0)
-   10428:	fff74693          	not	a3,a4
-   1042c:	0066f6b3          	and	a3,a3,t1
-   10430:	00d52423          	sw	a3,8(a0)
+   10450:	00852303          	lw	t1,8(a0)
+   10454:	fff74693          	not	a3,a4
+   10458:	0066f6b3          	and	a3,a3,t1
+   1045c:	00d52423          	sw	a3,8(a0)
                 GPIOx->INT_MASK |= current_pin;  // bật interrupt
-   10434:	00c52683          	lw	a3,12(a0)
-   10438:	00e6e733          	or	a4,a3,a4
-   1043c:	00e52623          	sw	a4,12(a0)
-   10440:	f9dff06f          	j	103dc <HAL_GPIO_Init+0x40>
+   10460:	00c52683          	lw	a3,12(a0)
+   10464:	00e6e733          	or	a4,a3,a4
+   10468:	00e52623          	sw	a4,12(a0)
+   1046c:	f9dff06f          	j	10408 <HAL_GPIO_Init+0x40>
 
-00010444 <HAL_GPIO_WritePin>:
+00010470 <HAL_GPIO_WritePin>:
 
 /**
  * Ghi giá trị ra chân GPIO
  */
 void HAL_GPIO_WritePin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin, GPIO_PinState PinState) {
     if (GPIOx == NULL) return;
-   10444:	00050e63          	beqz	a0,10460 <HAL_GPIO_WritePin+0x1c>
+   10470:	00050e63          	beqz	a0,1048c <HAL_GPIO_WritePin+0x1c>
 
     if (PinState == GPIO_PIN_SET) {
-   10448:	00100793          	li	a5,1
-   1044c:	00f60c63          	beq	a2,a5,10464 <HAL_GPIO_WritePin+0x20>
+   10474:	00100793          	li	a5,1
+   10478:	00f60c63          	beq	a2,a5,10490 <HAL_GPIO_WritePin+0x20>
         GPIOx->DATA_OUT |= GPIO_Pin;
     } else {
         GPIOx->DATA_OUT &= ~GPIO_Pin;
-   10450:	00452783          	lw	a5,4(a0)
-   10454:	fff5c593          	not	a1,a1
-   10458:	00f5f5b3          	and	a1,a1,a5
-   1045c:	00b52223          	sw	a1,4(a0)
+   1047c:	00452783          	lw	a5,4(a0)
+   10480:	fff5c593          	not	a1,a1
+   10484:	00f5f5b3          	and	a1,a1,a5
+   10488:	00b52223          	sw	a1,4(a0)
     }
 }
-   10460:	00008067          	ret
+   1048c:	00008067          	ret
         GPIOx->DATA_OUT |= GPIO_Pin;
-   10464:	00452783          	lw	a5,4(a0)
-   10468:	00f5e5b3          	or	a1,a1,a5
-   1046c:	00b52223          	sw	a1,4(a0)
-   10470:	00008067          	ret
+   10490:	00452783          	lw	a5,4(a0)
+   10494:	00f5e5b3          	or	a1,a1,a5
+   10498:	00b52223          	sw	a1,4(a0)
+   1049c:	00008067          	ret
 
-00010474 <HAL_GPIO_TogglePin>:
+000104a0 <HAL_GPIO_TogglePin>:
 
 /**
  * Đảo trạng thái chân (hay dùng để blink LED)
  */
 void HAL_GPIO_TogglePin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin) {
     if (GPIOx == NULL) return;
-   10474:	00050863          	beqz	a0,10484 <HAL_GPIO_TogglePin+0x10>
+   104a0:	00050863          	beqz	a0,104b0 <HAL_GPIO_TogglePin+0x10>
     GPIOx->DATA_OUT ^= GPIO_Pin; // đảo bit bằng XOR
-   10478:	00452783          	lw	a5,4(a0)
-   1047c:	00f5c5b3          	xor	a1,a1,a5
-   10480:	00b52223          	sw	a1,4(a0)
+   104a4:	00452783          	lw	a5,4(a0)
+   104a8:	00f5c5b3          	xor	a1,a1,a5
+   104ac:	00b52223          	sw	a1,4(a0)
 }
-   10484:	00008067          	ret
+   104b0:	00008067          	ret
 
-00010488 <HAL_GPIO_ReadPin>:
+000104b4 <HAL_GPIO_ReadPin>:
 
 /**
  * Đọc giá trị từ chân GPIO
  */
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin) {
     if (GPIOx == NULL) return GPIO_PIN_RESET;
-   10488:	00050863          	beqz	a0,10498 <HAL_GPIO_ReadPin+0x10>
+   104b4:	00050863          	beqz	a0,104c4 <HAL_GPIO_ReadPin+0x10>
 
     if ((GPIOx->DATA_IN & GPIO_Pin) != 0) {
-   1048c:	00052783          	lw	a5,0(a0)
-   10490:	00f5f533          	and	a0,a1,a5
-   10494:	00a03533          	snez	a0,a0
+   104b8:	00052783          	lw	a5,0(a0)
+   104bc:	00f5f533          	and	a0,a1,a5
+   104c0:	00a03533          	snez	a0,a0
         return GPIO_PIN_SET;
     } else {
         return GPIO_PIN_RESET;
     }
 }
-   10498:	00008067          	ret
+   104c4:	00008067          	ret
 
-0001049c <HAL_GPIO_EXTI_Callback>:
+000104c8 <HAL_GPIO_EXTI_Callback>:
     }
 }
 
 
 __attribute__((weak)) void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-   1049c:	00008067          	ret
+   104c8:	00008067          	ret
 
-000104a0 <HAL_GPIO_IRQHandler>:
+000104cc <HAL_GPIO_IRQHandler>:
     if (GPIOx == NULL) return;
-   104a0:	08050663          	beqz	a0,1052c <HAL_GPIO_IRQHandler+0x8c>
+   104cc:	08050663          	beqz	a0,10558 <HAL_GPIO_IRQHandler+0x8c>
 void HAL_GPIO_IRQHandler(GPIO_TypeDef *GPIOx) {
-   104a4:	fe010113          	addi	sp,sp,-32
+   104d0:	fe010113          	addi	sp,sp,-32
     uint32_t it_status = GPIOx->INT_STAT;
-   104a8:	01052783          	lw	a5,16(a0)
+   104d4:	01052783          	lw	a5,16(a0)
 void HAL_GPIO_IRQHandler(GPIO_TypeDef *GPIOx) {
-   104ac:	00912a23          	sw	s1,20(sp)
+   104d8:	00912a23          	sw	s1,20(sp)
     uint32_t valid_it = it_status & GPIOx->INT_MASK;
-   104b0:	00c52483          	lw	s1,12(a0)
+   104dc:	00c52483          	lw	s1,12(a0)
 void HAL_GPIO_IRQHandler(GPIO_TypeDef *GPIOx) {
-   104b4:	00812c23          	sw	s0,24(sp)
-   104b8:	01212823          	sw	s2,16(sp)
-   104bc:	01312623          	sw	s3,12(sp)
-   104c0:	01412423          	sw	s4,8(sp)
-   104c4:	00112e23          	sw	ra,28(sp)
-   104c8:	00050a13          	mv	s4,a0
+   104e0:	00812c23          	sw	s0,24(sp)
+   104e4:	01212823          	sw	s2,16(sp)
+   104e8:	01312623          	sw	s3,12(sp)
+   104ec:	01412423          	sw	s4,8(sp)
+   104f0:	00112e23          	sw	ra,28(sp)
+   104f4:	00050a13          	mv	s4,a0
     for (int i = 0; i < 32; i++) {
-   104cc:	00000413          	li	s0,0
+   104f8:	00000413          	li	s0,0
         uint32_t current_pin = (1 << i);
-   104d0:	00100993          	li	s3,1
+   104fc:	00100993          	li	s3,1
     uint32_t valid_it = it_status & GPIOx->INT_MASK;
-   104d4:	00f4f4b3          	and	s1,s1,a5
+   10500:	00f4f4b3          	and	s1,s1,a5
     for (int i = 0; i < 32; i++) {
-   104d8:	02000913          	li	s2,32
-   104dc:	00c0006f          	j	104e8 <HAL_GPIO_IRQHandler+0x48>
-   104e0:	00140413          	addi	s0,s0,1
-   104e4:	03240463          	beq	s0,s2,1050c <HAL_GPIO_IRQHandler+0x6c>
+   10504:	02000913          	li	s2,32
+   10508:	00c0006f          	j	10514 <HAL_GPIO_IRQHandler+0x48>
+   1050c:	00140413          	addi	s0,s0,1
+   10510:	03240463          	beq	s0,s2,10538 <HAL_GPIO_IRQHandler+0x6c>
         uint32_t current_pin = (1 << i);
-   104e8:	008997b3          	sll	a5,s3,s0
+   10514:	008997b3          	sll	a5,s3,s0
         if (valid_it & current_pin) {
-   104ec:	00f4f733          	and	a4,s1,a5
-   104f0:	fe0708e3          	beqz	a4,104e0 <HAL_GPIO_IRQHandler+0x40>
+   10518:	00f4f733          	and	a4,s1,a5
+   1051c:	fe0708e3          	beqz	a4,1050c <HAL_GPIO_IRQHandler+0x40>
             HAL_GPIO_EXTI_Callback(current_pin);
-   104f4:	01079513          	slli	a0,a5,0x10
-   104f8:	01055513          	srli	a0,a0,0x10
+   10520:	01079513          	slli	a0,a5,0x10
+   10524:	01055513          	srli	a0,a0,0x10
             GPIOx->INT_STAT = current_pin;
-   104fc:	00fa2823          	sw	a5,16(s4)
+   10528:	00fa2823          	sw	a5,16(s4)
     for (int i = 0; i < 32; i++) {
-   10500:	00140413          	addi	s0,s0,1
+   1052c:	00140413          	addi	s0,s0,1
             HAL_GPIO_EXTI_Callback(current_pin);
-   10504:	f99ff0ef          	jal	1049c <HAL_GPIO_EXTI_Callback>
+   10530:	f99ff0ef          	jal	104c8 <HAL_GPIO_EXTI_Callback>
     for (int i = 0; i < 32; i++) {
-   10508:	ff2410e3          	bne	s0,s2,104e8 <HAL_GPIO_IRQHandler+0x48>
+   10534:	ff2410e3          	bne	s0,s2,10514 <HAL_GPIO_IRQHandler+0x48>
 }
-   1050c:	01c12083          	lw	ra,28(sp)
-   10510:	01812403          	lw	s0,24(sp)
-   10514:	01412483          	lw	s1,20(sp)
-   10518:	01012903          	lw	s2,16(sp)
-   1051c:	00c12983          	lw	s3,12(sp)
-   10520:	00812a03          	lw	s4,8(sp)
-   10524:	02010113          	addi	sp,sp,32
-   10528:	00008067          	ret
-   1052c:	00008067          	ret
+   10538:	01c12083          	lw	ra,28(sp)
+   1053c:	01812403          	lw	s0,24(sp)
+   10540:	01412483          	lw	s1,20(sp)
+   10544:	01012903          	lw	s2,16(sp)
+   10548:	00c12983          	lw	s3,12(sp)
+   1054c:	00812a03          	lw	s4,8(sp)
+   10550:	02010113          	addi	sp,sp,32
+   10554:	00008067          	ret
+   10558:	00008067          	ret
 
-00010530 <i2c_init>:
+0001055c <i2c_init>:
 static void i2c_wait_done(void) {
     while (I2C0->STAT & I2C_STAT_TRANS);
 }
 
 void i2c_init(uint16_t prescaler) {
     I2C0->PRER = prescaler;
-   10530:	400047b7          	lui	a5,0x40004
-   10534:	00a7a023          	sw	a0,0(a5) # 40004000 <_estack+0x1ffe4000>
+   1055c:	400047b7          	lui	a5,0x40004
+   10560:	00a7a023          	sw	a0,0(a5) # 40004000 <_estack+0x1ffe4000>
 }
-   10538:	00008067          	ret
+   10564:	00008067          	ret
 
-0001053c <i2c_start>:
+00010568 <i2c_start>:
 
 void i2c_start(void) {
     I2C0->CMD = I2C_CMD_STA;
-   1053c:	40004737          	lui	a4,0x40004
-   10540:	08000793          	li	a5,128
-   10544:	00f72623          	sw	a5,12(a4) # 4000400c <_estack+0x1ffe400c>
+   10568:	40004737          	lui	a4,0x40004
+   1056c:	08000793          	li	a5,128
+   10570:	00f72623          	sw	a5,12(a4) # 4000400c <_estack+0x1ffe400c>
     while (I2C0->STAT & I2C_STAT_TRANS);
-   10548:	01072783          	lw	a5,16(a4)
-   1054c:	0027f793          	andi	a5,a5,2
-   10550:	fe079ce3          	bnez	a5,10548 <i2c_start+0xc>
+   10574:	01072783          	lw	a5,16(a4)
+   10578:	0027f793          	andi	a5,a5,2
+   1057c:	fe079ce3          	bnez	a5,10574 <i2c_start+0xc>
     i2c_wait_done();
 }
-   10554:	00008067          	ret
+   10580:	00008067          	ret
 
-00010558 <i2c_stop>:
+00010584 <i2c_stop>:
 
 void i2c_stop(void) {
     I2C0->CMD = I2C_CMD_STO;
-   10558:	40004737          	lui	a4,0x40004
-   1055c:	04000793          	li	a5,64
-   10560:	00f72623          	sw	a5,12(a4) # 4000400c <_estack+0x1ffe400c>
+   10584:	40004737          	lui	a4,0x40004
+   10588:	04000793          	li	a5,64
+   1058c:	00f72623          	sw	a5,12(a4) # 4000400c <_estack+0x1ffe400c>
     while (I2C0->STAT & I2C_STAT_TRANS);
-   10564:	01072783          	lw	a5,16(a4)
-   10568:	0027f793          	andi	a5,a5,2
-   1056c:	fe079ce3          	bnez	a5,10564 <i2c_stop+0xc>
+   10590:	01072783          	lw	a5,16(a4)
+   10594:	0027f793          	andi	a5,a5,2
+   10598:	fe079ce3          	bnez	a5,10590 <i2c_stop+0xc>
     i2c_wait_done();
 }
-   10570:	00008067          	ret
+   1059c:	00008067          	ret
 
-00010574 <i2c_write>:
+000105a0 <i2c_write>:
 
 // Trả về 0 nếu Slave nhận thành công (ACK=0), trả về 1 nếu NACK
 uint8_t i2c_write(uint8_t data) {
     I2C0->TXR = data;
-   10574:	40004737          	lui	a4,0x40004
-   10578:	00a72223          	sw	a0,4(a4) # 40004004 <_estack+0x1ffe4004>
+   105a0:	40004737          	lui	a4,0x40004
+   105a4:	00a72223          	sw	a0,4(a4) # 40004004 <_estack+0x1ffe4004>
     I2C0->CMD = I2C_CMD_WR;
-   1057c:	01000793          	li	a5,16
-   10580:	00f72623          	sw	a5,12(a4)
+   105a8:	01000793          	li	a5,16
+   105ac:	00f72623          	sw	a5,12(a4)
     while (I2C0->STAT & I2C_STAT_TRANS);
-   10584:	01072783          	lw	a5,16(a4)
-   10588:	0027f793          	andi	a5,a5,2
-   1058c:	fe079ce3          	bnez	a5,10584 <i2c_write+0x10>
+   105b0:	01072783          	lw	a5,16(a4)
+   105b4:	0027f793          	andi	a5,a5,2
+   105b8:	fe079ce3          	bnez	a5,105b0 <i2c_write+0x10>
     i2c_wait_done();
     
     // Kiểm tra bit số 7 của STAT (RxACK)
     return (I2C0->STAT & I2C_STAT_RXACK) ? 1 : 0; 
-   10590:	01072503          	lw	a0,16(a4)
-   10594:	00755513          	srli	a0,a0,0x7
+   105bc:	01072503          	lw	a0,16(a4)
+   105c0:	00755513          	srli	a0,a0,0x7
 }
-   10598:	00157513          	andi	a0,a0,1
-   1059c:	00008067          	ret
+   105c4:	00157513          	andi	a0,a0,1
+   105c8:	00008067          	ret
 
-000105a0 <i2c_read>:
+000105cc <i2c_read>:
 
 // Nếu send_ack = 0, Host sẽ trả về ACK. Nếu send_ack = 1, Host trả về NACK (để kết thúc)
 uint8_t i2c_read(uint8_t send_ack) {
     uint32_t cmd = I2C_CMD_RD;
-   105a0:	00a03533          	snez	a0,a0
-   105a4:	00351513          	slli	a0,a0,0x3
-   105a8:	02050513          	addi	a0,a0,32
+   105cc:	00a03533          	snez	a0,a0
+   105d0:	00351513          	slli	a0,a0,0x3
+   105d4:	02050513          	addi	a0,a0,32
     if (send_ack) {
         cmd |= I2C_CMD_ACK;
     }
     
     I2C0->CMD = cmd;
-   105ac:	40004737          	lui	a4,0x40004
-   105b0:	00a72623          	sw	a0,12(a4) # 4000400c <_estack+0x1ffe400c>
+   105d8:	40004737          	lui	a4,0x40004
+   105dc:	00a72623          	sw	a0,12(a4) # 4000400c <_estack+0x1ffe400c>
     while (I2C0->STAT & I2C_STAT_TRANS);
-   105b4:	01072783          	lw	a5,16(a4)
-   105b8:	0027f793          	andi	a5,a5,2
-   105bc:	fe079ce3          	bnez	a5,105b4 <i2c_read+0x14>
+   105e0:	01072783          	lw	a5,16(a4)
+   105e4:	0027f793          	andi	a5,a5,2
+   105e8:	fe079ce3          	bnez	a5,105e0 <i2c_read+0x14>
     i2c_wait_done();
     
     return (uint8_t)(I2C0->RXR & 0xFF);
-   105c0:	00872503          	lw	a0,8(a4)
+   105ec:	00872503          	lw	a0,8(a4)
 }
-   105c4:	0ff57513          	zext.b	a0,a0
-   105c8:	00008067          	ret
+   105f0:	0ff57513          	zext.b	a0,a0
+   105f4:	00008067          	ret
 
-000105cc <HAL_UART_RxCallback>:
+000105f8 <HAL_UART_RxCallback>:
         {
             HAL_GPIO_WritePin(GPIO0, GPIO_PIN_0, GPIO_PIN_RESET);
         }
 #endif
     }
 }
-   105cc:	00008067          	ret
+   105f8:	00008067          	ret
 
-000105d0 <plic_set_priority>:
+000105fc <plic_set_priority>:
  * ================================================================== */
 #include "plic.h"
 
 // Set độ ưu tiên cho 1 ngắt (0-7, số càng to ưu tiên càng cao)
 void plic_set_priority(uint32_t irq_id, uint32_t priority) {
     PLIC_PRIORITY(irq_id) = priority & 0x07; // Chỉ lấy 3 bit
-   105d0:	110007b7          	lui	a5,0x11000
-   105d4:	00f50533          	add	a0,a0,a5
-   105d8:	0075f593          	andi	a1,a1,7
-   105dc:	00251513          	slli	a0,a0,0x2
-   105e0:	00b52023          	sw	a1,0(a0)
+   105fc:	110007b7          	lui	a5,0x11000
+   10600:	00f50533          	add	a0,a0,a5
+   10604:	0075f593          	andi	a1,a1,7
+   10608:	00251513          	slli	a0,a0,0x2
+   1060c:	00b52023          	sw	a1,0(a0)
 }
-   105e4:	00008067          	ret
+   10610:	00008067          	ret
 
-000105e8 <plic_enable_interrupt>:
+00010614 <plic_enable_interrupt>:
 
 // Cho phép ngắt lọt qua PLIC
 void plic_enable_interrupt(uint32_t irq_id) {
     PLIC_ENABLE |= (1 << irq_id);
-   105e8:	44002737          	lui	a4,0x44002
-   105ec:	00072683          	lw	a3,0(a4) # 44002000 <_estack+0x23fe2000>
-   105f0:	00100793          	li	a5,1
-   105f4:	00a797b3          	sll	a5,a5,a0
-   105f8:	00d7e7b3          	or	a5,a5,a3
-   105fc:	00f72023          	sw	a5,0(a4)
+   10614:	44002737          	lui	a4,0x44002
+   10618:	00072683          	lw	a3,0(a4) # 44002000 <_estack+0x23fe2000>
+   1061c:	00100793          	li	a5,1
+   10620:	00a797b3          	sll	a5,a5,a0
+   10624:	00d7e7b3          	or	a5,a5,a3
+   10628:	00f72023          	sw	a5,0(a4)
 }
-   10600:	00008067          	ret
+   1062c:	00008067          	ret
 
-00010604 <plic_disable_interrupt>:
+00010630 <plic_disable_interrupt>:
 
 void plic_disable_interrupt(uint32_t irq_id) {
     PLIC_ENABLE &= ~(1 << irq_id);
-   10604:	44002737          	lui	a4,0x44002
-   10608:	00072683          	lw	a3,0(a4) # 44002000 <_estack+0x23fe2000>
-   1060c:	00100793          	li	a5,1
-   10610:	00a797b3          	sll	a5,a5,a0
-   10614:	fff7c793          	not	a5,a5
-   10618:	00d7f7b3          	and	a5,a5,a3
-   1061c:	00f72023          	sw	a5,0(a4)
+   10630:	44002737          	lui	a4,0x44002
+   10634:	00072683          	lw	a3,0(a4) # 44002000 <_estack+0x23fe2000>
+   10638:	00100793          	li	a5,1
+   1063c:	00a797b3          	sll	a5,a5,a0
+   10640:	fff7c793          	not	a5,a5
+   10644:	00d7f7b3          	and	a5,a5,a3
+   10648:	00f72023          	sw	a5,0(a4)
 }
-   10620:	00008067          	ret
+   1064c:	00008067          	ret
 
-00010624 <plic_set_threshold>:
+00010650 <plic_set_threshold>:
 
 // Cấu hình ngưỡng chặn (Thường set = 0 để nhận mọi ngắt)
 void plic_set_threshold(uint32_t threshold) {
     PLIC_THRESHOLD = threshold & 0x07;
-   10624:	00757513          	andi	a0,a0,7
-   10628:	442007b7          	lui	a5,0x44200
-   1062c:	00a7a023          	sw	a0,0(a5) # 44200000 <_estack+0x241e0000>
+   10650:	00757513          	andi	a0,a0,7
+   10654:	442007b7          	lui	a5,0x44200
+   10658:	00a7a023          	sw	a0,0(a5) # 44200000 <_estack+0x241e0000>
 }
-   10630:	00008067          	ret
+   1065c:	00008067          	ret
 
-00010634 <plic_claim>:
+00010660 <plic_claim>:
 
 // CPU đọc ID của ngắt vừa xảy ra
 uint32_t plic_claim(void) {
     return PLIC_CLAIM;
-   10634:	442007b7          	lui	a5,0x44200
-   10638:	0047a503          	lw	a0,4(a5) # 44200004 <_estack+0x241e0004>
+   10660:	442007b7          	lui	a5,0x44200
+   10664:	0047a503          	lw	a0,4(a5) # 44200004 <_estack+0x241e0004>
 }
-   1063c:	00008067          	ret
+   10668:	00008067          	ret
 
-00010640 <plic_complete>:
+0001066c <plic_complete>:
 
 // CPU báo cho PLIC đã xử lý xong ngắt đó
 void plic_complete(uint32_t irq_id) {
     if (irq_id != 0) {
-   10640:	00050663          	beqz	a0,1064c <plic_complete+0xc>
+   1066c:	00050663          	beqz	a0,10678 <plic_complete+0xc>
         PLIC_CLAIM = irq_id; 
-   10644:	442007b7          	lui	a5,0x44200
-   10648:	00a7a223          	sw	a0,4(a5) # 44200004 <_estack+0x241e0004>
+   10670:	442007b7          	lui	a5,0x44200
+   10674:	00a7a223          	sw	a0,4(a5) # 44200004 <_estack+0x241e0004>
     }
-   1064c:	00008067          	ret
+   10678:	00008067          	ret
 
-00010650 <spi_init>:
+0001067c <spi_init>:
 #if CONFIG_HAS_SPI
 #include "spi.h"
 
 void spi_init(uint8_t cpol, uint8_t cpha, uint32_t clock_div) {
     // Ghi CPOL và CPHA vào CTRL
     SPI0->CTRL = ((cpol & 1) << 1) | (cpha & 1);
-   10650:	00151513          	slli	a0,a0,0x1
-   10654:	00257513          	andi	a0,a0,2
-   10658:	0015f593          	andi	a1,a1,1
-   1065c:	400037b7          	lui	a5,0x40003
-   10660:	00b56533          	or	a0,a0,a1
-   10664:	00a7a023          	sw	a0,0(a5) # 40003000 <_estack+0x1ffe3000>
+   1067c:	00151513          	slli	a0,a0,0x1
+   10680:	00257513          	andi	a0,a0,2
+   10684:	0015f593          	andi	a1,a1,1
+   10688:	400037b7          	lui	a5,0x40003
+   1068c:	00b56533          	or	a0,a0,a1
+   10690:	00a7a023          	sw	a0,0(a5) # 40003000 <_estack+0x1ffe3000>
     // Setup bộ chia tần số Clock
     SPI0->DIV = clock_div;
-   10668:	00c7a423          	sw	a2,8(a5)
+   10694:	00c7a423          	sw	a2,8(a5)
     // Mặc định nhả chân CS (Mức 1 = Không chọn Slave)
     SPI0->CS = 1;
-   1066c:	00100713          	li	a4,1
-   10670:	00e7a223          	sw	a4,4(a5)
+   10698:	00100713          	li	a4,1
+   1069c:	00e7a223          	sw	a4,4(a5)
 }
-   10674:	00008067          	ret
+   106a0:	00008067          	ret
 
-00010678 <spi_set_cs>:
+000106a4 <spi_set_cs>:
 
 void spi_set_cs(uint8_t state) {
     // Kéo CS xuống 0 để giao tiếp, 1 để ngắt
     SPI0->CS = state & 1;
-   10678:	00157513          	andi	a0,a0,1
-   1067c:	400037b7          	lui	a5,0x40003
-   10680:	00a7a223          	sw	a0,4(a5) # 40003004 <_estack+0x1ffe3004>
+   106a4:	00157513          	andi	a0,a0,1
+   106a8:	400037b7          	lui	a5,0x40003
+   106ac:	00a7a223          	sw	a0,4(a5) # 40003004 <_estack+0x1ffe3004>
 }
-   10684:	00008067          	ret
+   106b0:	00008067          	ret
 
-00010688 <spi_transfer>:
+000106b4 <spi_transfer>:
 
 // Truyền và nhận dữ liệu đồng thời (Đặc trưng của giao thức SPI)
 uint8_t spi_transfer(uint8_t data) {
     // 1. Chờ đến khi SPI rảnh rỗi
     while (SPI0->STATUS & SPI_STATUS_BUSY);
-   10688:	40003737          	lui	a4,0x40003
-   1068c:	01472783          	lw	a5,20(a4) # 40003014 <_estack+0x1ffe3014>
-   10690:	0017f793          	andi	a5,a5,1
-   10694:	fe079ce3          	bnez	a5,1068c <spi_transfer+0x4>
+   106b4:	40003737          	lui	a4,0x40003
+   106b8:	01472783          	lw	a5,20(a4) # 40003014 <_estack+0x1ffe3014>
+   106bc:	0017f793          	andi	a5,a5,1
+   106c0:	fe079ce3          	bnez	a5,106b8 <spi_transfer+0x4>
 
     // 2. Ghi dữ liệu vào TX (Mạch RTL sẽ tự động kích hoạt quá trình truyền)
     SPI0->TXDATA = data;
-   10698:	00a72623          	sw	a0,12(a4)
+   106c4:	00a72623          	sw	a0,12(a4)
 
     // 3. Chờ phần cứng báo DONE (Truyền xong 8 bit)
     while (!(SPI0->STATUS & SPI_STATUS_DONE));
-   1069c:	40003737          	lui	a4,0x40003
-   106a0:	01472783          	lw	a5,20(a4) # 40003014 <_estack+0x1ffe3014>
-   106a4:	0027f793          	andi	a5,a5,2
-   106a8:	fe078ce3          	beqz	a5,106a0 <spi_transfer+0x18>
+   106c8:	40003737          	lui	a4,0x40003
+   106cc:	01472783          	lw	a5,20(a4) # 40003014 <_estack+0x1ffe3014>
+   106d0:	0027f793          	andi	a5,a5,2
+   106d4:	fe078ce3          	beqz	a5,106cc <spi_transfer+0x18>
 
     // 4. Đọc dữ liệu nhận được từ MISO (Phần cứng tự xóa cờ DONE khi đọc)
     return (uint8_t)(SPI0->RXDATA & 0xFF);
-   106ac:	01072503          	lw	a0,16(a4)
+   106d8:	01072503          	lw	a0,16(a4)
 }
-   106b0:	0ff57513          	zext.b	a0,a0
-   106b4:	00008067          	ret
+   106dc:	0ff57513          	zext.b	a0,a0
+   106e0:	00008067          	ret
 
-000106b8 <_sbrk>:
+000106e4 <_sbrk>:
 void *_sbrk(int incr) {
     extern char _ebss; // Lấy địa chỉ cuối vùng biến BSS từ Linker Script
     static char *heap_end;
     char *prev_heap_end;
 
     if (heap_end == 0) {
-   106b8:	20000737          	lui	a4,0x20000
-   106bc:	00872783          	lw	a5,8(a4) # 20000008 <heap_end.0>
-   106c0:	00078a63          	beqz	a5,106d4 <_sbrk+0x1c>
+   106e4:	20000737          	lui	a4,0x20000
+   106e8:	00872783          	lw	a5,8(a4) # 20000008 <heap_end.0>
+   106ec:	00078a63          	beqz	a5,10700 <_sbrk+0x1c>
         heap_end = &_ebss;
     }
     prev_heap_end = heap_end;
     heap_end += incr;
-   106c4:	00a78533          	add	a0,a5,a0
-   106c8:	00a72423          	sw	a0,8(a4)
+   106f0:	00a78533          	add	a0,a5,a0
+   106f4:	00a72423          	sw	a0,8(a4)
 
     return (void *)prev_heap_end;
 }
-   106cc:	00078513          	mv	a0,a5
-   106d0:	00008067          	ret
-   106d4:	200007b7          	lui	a5,0x20000
-   106d8:	01078793          	addi	a5,a5,16 # 20000010 <_ebss>
+   106f8:	00078513          	mv	a0,a5
+   106fc:	00008067          	ret
+   10700:	200007b7          	lui	a5,0x20000
+   10704:	01078793          	addi	a5,a5,16 # 20000010 <_ebss>
     heap_end += incr;
-   106dc:	00a78533          	add	a0,a5,a0
-   106e0:	00a72423          	sw	a0,8(a4)
+   10708:	00a78533          	add	a0,a5,a0
+   1070c:	00a72423          	sw	a0,8(a4)
 }
-   106e4:	00078513          	mv	a0,a5
-   106e8:	00008067          	ret
+   10710:	00078513          	mv	a0,a5
+   10714:	00008067          	ret
 
-000106ec <_write>:
+00010718 <_write>:
 
 int _write(int file, char *ptr, int len) {
-   106ec:	ff010113          	addi	sp,sp,-16
-   106f0:	00812423          	sw	s0,8(sp)
+   10718:	ff010113          	addi	sp,sp,-16
+   1071c:	00812423          	sw	s0,8(sp)
     HAL_UART_Transmit(&huart0, (uint8_t*)ptr, len);
-   106f4:	20000537          	lui	a0,0x20000
+   10720:	20000537          	lui	a0,0x20000
 int _write(int file, char *ptr, int len) {
-   106f8:	00060413          	mv	s0,a2
+   10724:	00060413          	mv	s0,a2
     HAL_UART_Transmit(&huart0, (uint8_t*)ptr, len);
-   106fc:	01061613          	slli	a2,a2,0x10
-   10700:	00050513          	mv	a0,a0
-   10704:	01065613          	srli	a2,a2,0x10
+   10728:	01061613          	slli	a2,a2,0x10
+   1072c:	00050513          	mv	a0,a0
+   10730:	01065613          	srli	a2,a2,0x10
 int _write(int file, char *ptr, int len) {
-   10708:	00112623          	sw	ra,12(sp)
+   10734:	00112623          	sw	ra,12(sp)
     HAL_UART_Transmit(&huart0, (uint8_t*)ptr, len);
-   1070c:	1a4000ef          	jal	108b0 <HAL_UART_Transmit>
+   10738:	36c000ef          	jal	10aa4 <HAL_UART_Transmit>
     return len;
 }
-   10710:	00c12083          	lw	ra,12(sp)
-   10714:	00040513          	mv	a0,s0
-   10718:	00812403          	lw	s0,8(sp)
-   1071c:	01010113          	addi	sp,sp,16
-   10720:	00008067          	ret
+   1073c:	00c12083          	lw	ra,12(sp)
+   10740:	00040513          	mv	a0,s0
+   10744:	00812403          	lw	s0,8(sp)
+   10748:	01010113          	addi	sp,sp,16
+   1074c:	00008067          	ret
 
-00010724 <_close>:
+00010750 <_close>:
 // Các hàm rỗng để chống báo lỗi thư viện
 int _close(int file) { return -1; }
-   10724:	fff00513          	li	a0,-1
-   10728:	00008067          	ret
+   10750:	fff00513          	li	a0,-1
+   10754:	00008067          	ret
 
-0001072c <_fstat>:
+00010758 <_fstat>:
 int _fstat(int file, void *st) { return 0; }
-   1072c:	00000513          	li	a0,0
-   10730:	00008067          	ret
+   10758:	00000513          	li	a0,0
+   1075c:	00008067          	ret
 
-00010734 <_isatty>:
+00010760 <_isatty>:
 int _isatty(int file) { return 1; }
-   10734:	00100513          	li	a0,1
-   10738:	00008067          	ret
+   10760:	00100513          	li	a0,1
+   10764:	00008067          	ret
 
-0001073c <_lseek>:
+00010768 <_lseek>:
 int _lseek(int file, int ptr, int dir) { return 0; }
-   1073c:	00000513          	li	a0,0
-   10740:	00008067          	ret
+   10768:	00000513          	li	a0,0
+   1076c:	00008067          	ret
 
-00010744 <_read>:
-   10744:	00000513          	li	a0,0
-   10748:	00008067          	ret
+00010770 <_read>:
+   10770:	00000513          	li	a0,0
+   10774:	00008067          	ret
 
-0001074c <syscon_enable_clock>:
+00010778 <syscon_enable_clock>:
 // CÁC HÀM ĐIỀU KHIỂN THỦ CÔNG
 // --------------------------------------------------------
 // Cấp xung nhịp cho một khối ngoại vi
 void syscon_enable_clock(uint8_t peripheral_bit) {
     //if (peripheral_bit > 7) return;
     SYSCON_CLK_GATE |= (1 << peripheral_bit);
-   1074c:	40007737          	lui	a4,0x40007
-   10750:	00472683          	lw	a3,4(a4) # 40007004 <_estack+0x1ffe7004>
-   10754:	00100793          	li	a5,1
-   10758:	00a797b3          	sll	a5,a5,a0
-   1075c:	00d7e7b3          	or	a5,a5,a3
-   10760:	00f72223          	sw	a5,4(a4)
+   10778:	40007737          	lui	a4,0x40007
+   1077c:	00472683          	lw	a3,4(a4) # 40007004 <_estack+0x1ffe7004>
+   10780:	00100793          	li	a5,1
+   10784:	00a797b3          	sll	a5,a5,a0
+   10788:	00d7e7b3          	or	a5,a5,a3
+   1078c:	00f72223          	sw	a5,4(a4)
     
 }
-   10764:	00008067          	ret
+   10790:	00008067          	ret
 
-00010768 <syscon_disable_clock>:
+00010794 <syscon_disable_clock>:
 
 // Hàm ngắt xung nhịp để tiết kiệm điện
 void syscon_disable_clock(uint8_t peripheral_bit) {
     if (peripheral_bit > 7) return;
-   10768:	00700793          	li	a5,7
-   1076c:	02a7e063          	bltu	a5,a0,1078c <syscon_disable_clock+0x24>
+   10794:	00700793          	li	a5,7
+   10798:	02a7e063          	bltu	a5,a0,107b8 <syscon_disable_clock+0x24>
     if (peripheral_bit == SYSCON_CLK_CPU) return;
     
     SYSCON_CLK_GATE &= ~(1 << peripheral_bit);
-   10770:	40007737          	lui	a4,0x40007
-   10774:	00472683          	lw	a3,4(a4) # 40007004 <_estack+0x1ffe7004>
-   10778:	00100793          	li	a5,1
-   1077c:	00a797b3          	sll	a5,a5,a0
-   10780:	fff7c793          	not	a5,a5
-   10784:	00d7f7b3          	and	a5,a5,a3
-   10788:	00f72223          	sw	a5,4(a4)
+   1079c:	40007737          	lui	a4,0x40007
+   107a0:	00472683          	lw	a3,4(a4) # 40007004 <_estack+0x1ffe7004>
+   107a4:	00100793          	li	a5,1
+   107a8:	00a797b3          	sll	a5,a5,a0
+   107ac:	fff7c793          	not	a5,a5
+   107b0:	00d7f7b3          	and	a5,a5,a3
+   107b4:	00f72223          	sw	a5,4(a4)
 }
-   1078c:	00008067          	ret
+   107b8:	00008067          	ret
 
-00010790 <syscon_set_boot_address>:
+000107bc <syscon_set_boot_address>:
 // Hàm đổi địa chỉ Boot (dùng cho Bootloader nhảy sang vùng nhớ khác)
 void syscon_set_boot_address(uint32_t addr) {
     SYSCON_RESET_VECTOR = addr;
-   10790:	400077b7          	lui	a5,0x40007
-   10794:	00a7a023          	sw	a0,0(a5) # 40007000 <_estack+0x1ffe7000>
+   107bc:	400077b7          	lui	a5,0x40007
+   107c0:	00a7a023          	sw	a0,0(a5) # 40007000 <_estack+0x1ffe7000>
 }
-   10798:	00008067          	ret
+   107c4:	00008067          	ret
 
-0001079c <syscon_init_clocks>:
+000107c8 <syscon_init_clocks>:
     #if CONFIG_HAS_ACCEL
         clock_mask |= (1 << SYSCON_CLK_ACCEL);
     #endif
 
     // 3. Ghi 1 lần duy nhất xuống thanh ghi để bật đồng loạt
     SYSCON_CLK_GATE = clock_mask;
-   1079c:	400077b7          	lui	a5,0x40007
-   107a0:	04e00713          	li	a4,78
-   107a4:	00e7a223          	sw	a4,4(a5) # 40007004 <_estack+0x1ffe7004>
+   107c8:	400077b7          	lui	a5,0x40007
+   107cc:	04e00713          	li	a4,78
+   107d0:	00e7a223          	sw	a4,4(a5) # 40007004 <_estack+0x1ffe7004>
 }
-   107a8:	00008067          	ret
+   107d4:	00008067          	ret
 
-000107ac <system_trap_handler>:
+000107d8 <trap_puthex>:
+ * ================================================================== */
+#define UART_STATUS_TX_FULL  (1u << 2)   // xem HAL_UART_Transmit trong uart.c
+#define UART_STATUS_TX_BUSY  (1u << 4)
+
+static void trap_putc(char c) {
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   107d8:	40000737          	lui	a4,0x40000
+   107dc:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   107e0:	0047f793          	andi	a5,a5,4
+   107e4:	fe079ce3          	bnez	a5,107dc <trap_puthex+0x4>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   107e8:	03000793          	li	a5,48
+   107ec:	00f72223          	sw	a5,4(a4)
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   107f0:	40000737          	lui	a4,0x40000
+   107f4:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   107f8:	0047f793          	andi	a5,a5,4
+   107fc:	fe079ce3          	bnez	a5,107f4 <trap_puthex+0x1c>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   10800:	07800793          	li	a5,120
+   10804:	000115b7          	lui	a1,0x11
+   10808:	00f72223          	sw	a5,4(a4)
+
+static void trap_puthex(uint32_t v) {
+    static const char hexdig[] = "0123456789ABCDEF";
+    int i;
+    trap_putc('0'); trap_putc('x');
+    for (i = 28; i >= 0; i -= 4) {
+   1080c:	15858593          	addi	a1,a1,344 # 11158 <hexdig.0>
+   10810:	01c00693          	li	a3,28
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   10814:	40000737          	lui	a4,0x40000
+    for (i = 28; i >= 0; i -= 4) {
+   10818:	ffc00813          	li	a6,-4
+        trap_putc(hexdig[(v >> i) & 0xFu]);
+   1081c:	00d557b3          	srl	a5,a0,a3
+   10820:	00f7f793          	andi	a5,a5,15
+   10824:	00f587b3          	add	a5,a1,a5
+   10828:	0007c603          	lbu	a2,0(a5)
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   1082c:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   10830:	0047f793          	andi	a5,a5,4
+   10834:	fe079ce3          	bnez	a5,1082c <trap_puthex+0x54>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   10838:	00c72223          	sw	a2,4(a4)
+    for (i = 28; i >= 0; i -= 4) {
+   1083c:	ffc68693          	addi	a3,a3,-4
+   10840:	fd069ee3          	bne	a3,a6,1081c <trap_puthex+0x44>
+    }
+}
+   10844:	00008067          	ret
+
+00010848 <system_trap_handler>:
+/**
+ * @brief Hàm xử lý Trap tổng của hệ thống
+ * @param mcause: Nguyên nhân sinh ra ngắt/bẫy
+ * @param mepc: Địa chỉ lệnh bị ngắt
+ */
 void system_trap_handler(uint32_t mcause, uint32_t mepc) {
+   10848:	ff010113          	addi	sp,sp,-16
     
     // ---------------------------------------------------------
     // LUỒNG 1: NGẮT NGOẠI VI TỪ PLIC (UART, DMA, GPIO...)
     // ---------------------------------------------------------
     if (mcause == CAUSE_MACHINE_EXTERNAL_INT) {
-   107ac:	800007b7          	lui	a5,0x80000
-   107b0:	00b78793          	addi	a5,a5,11 # 8000000b <_estack+0x5ffe000b>
-   107b4:	04f50263          	beq	a0,a5,107f8 <system_trap_handler+0x4c>
+   1084c:	800007b7          	lui	a5,0x80000
+void system_trap_handler(uint32_t mcause, uint32_t mepc) {
+   10850:	00112623          	sw	ra,12(sp)
+    if (mcause == CAUSE_MACHINE_EXTERNAL_INT) {
+   10854:	00b78793          	addi	a5,a5,11 # 8000000b <_estack+0x5ffe000b>
+   10858:	14f50a63          	beq	a0,a5,109ac <system_trap_handler+0x164>
     } 
     
     // ---------------------------------------------------------
     // LUỒNG 2: NGẮT THỜI GIAN TỪ CLINT (SYSTEM TICK)
     // ---------------------------------------------------------
     else if (mcause == CAUSE_MACHINE_TIMER_INT) {
-   107b8:	800007b7          	lui	a5,0x80000
-   107bc:	00778793          	addi	a5,a5,7 # 80000007 <_estack+0x5ffe0007>
-   107c0:	06f50463          	beq	a0,a5,10828 <system_trap_handler+0x7c>
+   1085c:	800007b7          	lui	a5,0x80000
+   10860:	00912223          	sw	s1,4(sp)
+   10864:	00778793          	addi	a5,a5,7 # 80000007 <_estack+0x5ffe0007>
+   10868:	00050493          	mv	s1,a0
+   1086c:	16f50a63          	beq	a0,a5,109e0 <system_trap_handler+0x198>
     } 
     
     // ---------------------------------------------------------
     // LUỒNG 3: NGẮT PHẦN MỀM TỪ CLINT
     // ---------------------------------------------------------
     else if (mcause == CAUSE_MACHINE_SOFTWARE_INT) {
-   107c4:	800007b7          	lui	a5,0x80000
-   107c8:	00378793          	addi	a5,a5,3 # 80000003 <_estack+0x5ffe0003>
-   107cc:	02f50463          	beq	a0,a5,107f4 <system_trap_handler+0x48>
-    // LUỒNG 4: CÁC LỖI NGOẠI LỆ (EXCEPTIONS)
-    // ---------------------------------------------------------
-    else {
-        // Advance mepc past the faulting instruction so mret resumes at the next instruction.
-        // Compressed (16-bit) instructions have bits[1:0] != 2'b11; all others are 32-bit.
-        uint32_t faulting_instr = *(volatile uint32_t *)mepc;
-   107d0:	0005a703          	lw	a4,0(a1)
-        uint32_t advance = ((faulting_instr & 0x3) == 0x3) ? 4 : 2;
-   107d4:	00300693          	li	a3,3
-   107d8:	00200793          	li	a5,2
-   107dc:	00d77733          	and	a4,a4,a3
-   107e0:	00d71463          	bne	a4,a3,107e8 <system_trap_handler+0x3c>
-   107e4:	00400793          	li	a5,4
+   10870:	800007b7          	lui	a5,0x80000
+   10874:	00378793          	addi	a5,a5,3 # 80000003 <_estack+0x5ffe0003>
+   10878:	12f50263          	beq	a0,a5,1099c <system_trap_handler+0x154>
+   1087c:	00812423          	sw	s0,8(sp)
+   10880:	01212023          	sw	s2,0(sp)
+   10884:	00058413          	mv	s0,a1
+    __asm__ volatile ("csrr %0, mtval" : "=r"(v));
+   10888:	343027f3          	csrr	a5,mtval
+   1088c:	000116b7          	lui	a3,0x11
+   10890:	000115b7          	lui	a1,0x11
+   10894:	00078913          	mv	s2,a5
+   10898:	10868693          	addi	a3,a3,264 # 11108 <__udivdi3+0x408>
+   1089c:	11758593          	addi	a1,a1,279 # 11117 <__udivdi3+0x417>
+    while (*s) trap_putc(*s++);
+   108a0:	00a00613          	li	a2,10
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   108a4:	40000737          	lui	a4,0x40000
+    while (*s) trap_putc(*s++);
+   108a8:	00168693          	addi	a3,a3,1
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   108ac:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   108b0:	0047f793          	andi	a5,a5,4
+   108b4:	fe079ce3          	bnez	a5,108ac <system_trap_handler+0x64>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   108b8:	00c72223          	sw	a2,4(a4)
+    while (*s) trap_putc(*s++);
+   108bc:	0006c603          	lbu	a2,0(a3)
+   108c0:	feb694e3          	bne	a3,a1,108a8 <system_trap_handler+0x60>
+           hoặc mã lệnh). In ra TRƯỚC khi làm bất cứ việc gì khác - với con trỏ
+           hỏng thì địa chỉ gây lỗi là thứ có giá trị nhất. */
+        uint32_t mtval = read_mtval();
+
+        trap_puts("\n[TRAP] mcause=");
+        trap_puthex(mcause);
+   108c4:	00048513          	mv	a0,s1
+   108c8:	f11ff0ef          	jal	107d8 <trap_puthex>
+   108cc:	000116b7          	lui	a3,0x11
+   108d0:	000115b7          	lui	a1,0x11
+   108d4:	11868693          	addi	a3,a3,280 # 11118 <__udivdi3+0x418>
+   108d8:	11e58593          	addi	a1,a1,286 # 1111e <__udivdi3+0x41e>
+    while (*s) trap_putc(*s++);
+   108dc:	02000613          	li	a2,32
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   108e0:	40000737          	lui	a4,0x40000
+    while (*s) trap_putc(*s++);
+   108e4:	00168693          	addi	a3,a3,1
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   108e8:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   108ec:	0047f793          	andi	a5,a5,4
+   108f0:	fe079ce3          	bnez	a5,108e8 <system_trap_handler+0xa0>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   108f4:	00c72223          	sw	a2,4(a4)
+    while (*s) trap_putc(*s++);
+   108f8:	0006c603          	lbu	a2,0(a3)
+   108fc:	feb694e3          	bne	a3,a1,108e4 <system_trap_handler+0x9c>
+        trap_puts(" mepc=");
+        trap_puthex(mepc);
+   10900:	00040513          	mv	a0,s0
+   10904:	ed5ff0ef          	jal	107d8 <trap_puthex>
+   10908:	000116b7          	lui	a3,0x11
+   1090c:	000115b7          	lui	a1,0x11
+   10910:	12068693          	addi	a3,a3,288 # 11120 <__udivdi3+0x420>
+   10914:	12758593          	addi	a1,a1,295 # 11127 <__udivdi3+0x427>
+    while (*s) trap_putc(*s++);
+   10918:	02000613          	li	a2,32
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   1091c:	40000737          	lui	a4,0x40000
+    while (*s) trap_putc(*s++);
+   10920:	00168693          	addi	a3,a3,1
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   10924:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   10928:	0047f793          	andi	a5,a5,4
+   1092c:	fe079ce3          	bnez	a5,10924 <system_trap_handler+0xdc>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   10930:	00c72223          	sw	a2,4(a4)
+    while (*s) trap_putc(*s++);
+   10934:	0006c603          	lbu	a2,0(a3)
+   10938:	feb694e3          	bne	a3,a1,10920 <system_trap_handler+0xd8>
+        trap_puts(" mtval=");
+        trap_puthex(mtval);
+   1093c:	00090513          	mv	a0,s2
+   10940:	e99ff0ef          	jal	107d8 <trap_puthex>
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   10944:	40000737          	lui	a4,0x40000
+   10948:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   1094c:	0047f793          	andi	a5,a5,4
+   10950:	fe079ce3          	bnez	a5,10948 <system_trap_handler+0x100>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   10954:	00a00793          	li	a5,10
+   10958:	00f72223          	sw	a5,4(a4)
+         * lệnh ở đó sẽ sinh tiếp mcause 5 NGAY TRONG handler này -> lần trap
+         * thứ hai ghi đè mepc, handler quay lại chính nó -> treo (double
+         * fault). Và cũng không có cách nào biết lệnh dài 2 hay 4 byte để nhảy
+         * qua. Không có đường phục hồi hợp lệ: dừng hẳn.
+         * ----------------------------------------------------------------- */
+        if (mcause == CAUSE_INSTR_MISALIGNED || mcause == CAUSE_INSTR_ACCESS_FAULT) {
+   1095c:	00100793          	li	a5,1
+   10960:	0a97fa63          	bgeu	a5,s1,10a14 <system_trap_handler+0x1cc>
+         * dưới. `*(uint32_t*)mepc` từ nửa word lẻ là một misaligned word load,
+         * mà RTL bây giờ raise mcause 4 cho nó -> lại double fault. Nửa word
+         * thấp luôn hợp lệ và đã đủ để biết độ dài lệnh (bits[1:0] == 2'b11
+         * là lệnh 32-bit, còn lại là lệnh nén 16-bit).
+         * ----------------------------------------------------------------- */
+        uint16_t instr_lo = *(volatile uint16_t *)mepc;
+   10964:	00045703          	lhu	a4,0(s0)
+        uint32_t advance  = ((instr_lo & 0x3u) == 0x3u) ? 4u : 2u;
+   10968:	00300693          	li	a3,3
+   1096c:	00200793          	li	a5,2
+   10970:	00d77733          	and	a4,a4,a3
+   10974:	00d71463          	bne	a4,a3,1097c <system_trap_handler+0x134>
+   10978:	00400793          	li	a5,4
+
         __asm__ volatile ("csrw mepc, %0" :: "r"(mepc + advance));
-   107e8:	00b787b3          	add	a5,a5,a1
-   107ec:	34179073          	csrw	mepc,a5
+   1097c:	008787b3          	add	a5,a5,s0
+   10980:	34179073          	csrw	mepc,a5
+   10984:	00412483          	lw	s1,4(sp)
+   10988:	00012903          	lw	s2,0(sp)
+   1098c:	00812403          	lw	s0,8(sp)
         // Return to trap_entry which will execute mret and resume after the fault.
         return;
-   107f0:	00008067          	ret
-        clint_clear_soft_irq();
-   107f4:	a19ff06f          	j	1020c <clint_clear_soft_irq>
-void system_trap_handler(uint32_t mcause, uint32_t mepc) {
-   107f8:	fe010113          	addi	sp,sp,-32
-   107fc:	00112e23          	sw	ra,28(sp)
-        uint32_t irq_id = plic_claim();
-   10800:	e35ff0ef          	jal	10634 <plic_claim>
-        if (irq_id == IRQ_UART) {
-   10804:	00100713          	li	a4,1
-        uint32_t irq_id = plic_claim();
-   10808:	00050793          	mv	a5,a0
-        if (irq_id == IRQ_UART) {
-   1080c:	02e50663          	beq	a0,a4,10838 <system_trap_handler+0x8c>
-        else if (irq_id == IRQ_GPIO) {
-   10810:	00200713          	li	a4,2
-   10814:	04e50463          	beq	a0,a4,1085c <system_trap_handler+0xb0>
-        if (irq_id != 0) {
-   10818:	02051a63          	bnez	a0,1084c <system_trap_handler+0xa0>
     }
-   1081c:	01c12083          	lw	ra,28(sp)
-   10820:	02010113          	addi	sp,sp,32
-   10824:	00008067          	ret
-        clint_set_timer_ms(1000, 200000000); 
-   10828:	0bebc5b7          	lui	a1,0xbebc
-   1082c:	20058593          	addi	a1,a1,512 # bebc200 <_etext+0xbeab6d4>
-   10830:	3e800513          	li	a0,1000
-   10834:	969ff06f          	j	1019c <clint_set_timer_ms>
-   10838:	00a12623          	sw	a0,12(sp)
+   10990:	00c12083          	lw	ra,12(sp)
+   10994:	01010113          	addi	sp,sp,16
+   10998:	00008067          	ret
+        clint_clear_soft_irq();
+   1099c:	00412483          	lw	s1,4(sp)
+   109a0:	00c12083          	lw	ra,12(sp)
+   109a4:	01010113          	addi	sp,sp,16
+        clint_clear_soft_irq();
+   109a8:	871ff06f          	j	10218 <clint_clear_soft_irq>
+   109ac:	00812423          	sw	s0,8(sp)
+        uint32_t irq_id = plic_claim();
+   109b0:	cb1ff0ef          	jal	10660 <plic_claim>
+        if (irq_id == IRQ_UART) {
+   109b4:	00100793          	li	a5,1
+        uint32_t irq_id = plic_claim();
+   109b8:	00050413          	mv	s0,a0
+        if (irq_id == IRQ_UART) {
+   109bc:	02f50e63          	beq	a0,a5,109f8 <system_trap_handler+0x1b0>
+        else if (irq_id == IRQ_GPIO) {
+   109c0:	00200793          	li	a5,2
+   109c4:	04f50263          	beq	a0,a5,10a08 <system_trap_handler+0x1c0>
+        if (irq_id != 0) {
+   109c8:	fc0502e3          	beqz	a0,1098c <system_trap_handler+0x144>
+            plic_complete(irq_id);
+   109cc:	00040513          	mv	a0,s0
+   109d0:	00812403          	lw	s0,8(sp)
+   109d4:	00c12083          	lw	ra,12(sp)
+   109d8:	01010113          	addi	sp,sp,16
+            plic_complete(irq_id);
+   109dc:	c91ff06f          	j	1066c <plic_complete>
+        clint_set_timer_ms(1000, RTC_CLOCK_HZ); 
+   109e0:	00412483          	lw	s1,4(sp)
+   109e4:	00c12083          	lw	ra,12(sp)
+        clint_set_timer_ms(1000, RTC_CLOCK_HZ); 
+   109e8:	000085b7          	lui	a1,0x8
+   109ec:	3e800513          	li	a0,1000
+   109f0:	01010113          	addi	sp,sp,16
+        clint_set_timer_ms(1000, RTC_CLOCK_HZ); 
+   109f4:	f94ff06f          	j	10188 <clint_set_timer_ms>
             HAL_UART_IRQHandler(&huart0);
-   1083c:	20000537          	lui	a0,0x20000
-   10840:	00050513          	mv	a0,a0
-   10844:	1dc000ef          	jal	10a20 <HAL_UART_IRQHandler>
+   109f8:	20000537          	lui	a0,0x20000
+   109fc:	00050513          	mv	a0,a0
+   10a00:	214000ef          	jal	10c14 <HAL_UART_IRQHandler>
         if (irq_id != 0) {
-   10848:	00c12783          	lw	a5,12(sp)
-   1084c:	01c12083          	lw	ra,28(sp)
-            plic_complete(irq_id);
-   10850:	00078513          	mv	a0,a5
-   10854:	02010113          	addi	sp,sp,32
-            plic_complete(irq_id);
-   10858:	de9ff06f          	j	10640 <plic_complete>
-   1085c:	00a12623          	sw	a0,12(sp)
+   10a04:	fc9ff06f          	j	109cc <system_trap_handler+0x184>
             HAL_GPIO_IRQHandler(GPIO0);
-   10860:	40001537          	lui	a0,0x40001
-   10864:	c3dff0ef          	jal	104a0 <HAL_GPIO_IRQHandler>
+   10a08:	40001537          	lui	a0,0x40001
+   10a0c:	ac1ff0ef          	jal	104cc <HAL_GPIO_IRQHandler>
         if (irq_id != 0) {
-   10868:	00c12783          	lw	a5,12(sp)
-   1086c:	fe1ff06f          	j	1084c <system_trap_handler+0xa0>
+   10a10:	fbdff06f          	j	109cc <system_trap_handler+0x184>
+   10a14:	000117b7          	lui	a5,0x11
+   10a18:	00011737          	lui	a4,0x11
+   10a1c:	12878793          	addi	a5,a5,296 # 11128 <__udivdi3+0x428>
+   10a20:	15770713          	addi	a4,a4,343 # 11157 <__udivdi3+0x457>
+    while (*s) trap_putc(*s++);
+   10a24:	05b00593          	li	a1,91
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   10a28:	40000637          	lui	a2,0x40000
+    while (*s) trap_putc(*s++);
+   10a2c:	00178793          	addi	a5,a5,1
+    while ((UART0->STATUS & UART_STATUS_TX_FULL) != 0u) { }
+   10a30:	00c62683          	lw	a3,12(a2) # 4000000c <_estack+0x1ffe000c>
+   10a34:	0046f693          	andi	a3,a3,4
+   10a38:	fe069ce3          	bnez	a3,10a30 <system_trap_handler+0x1e8>
+    UART0->TX_DATA = (uint32_t)(uint8_t)c;
+   10a3c:	00b62223          	sw	a1,4(a2)
+    while (*s) trap_putc(*s++);
+   10a40:	0007c583          	lbu	a1,0(a5)
+   10a44:	fee794e3          	bne	a5,a4,10a2c <system_trap_handler+0x1e4>
+    while ((UART0->STATUS & UART_STATUS_TX_BUSY) != 0u) { }  // xả nốt FIFO
+   10a48:	40000737          	lui	a4,0x40000
+   10a4c:	00c72783          	lw	a5,12(a4) # 4000000c <_estack+0x1ffe000c>
+   10a50:	0107f793          	andi	a5,a5,16
+   10a54:	fe079ce3          	bnez	a5,10a4c <system_trap_handler+0x204>
+        __asm__ volatile ("wfi");
+   10a58:	10500073          	wfi
+   10a5c:	10500073          	wfi
+    for (;;) {
+   10a60:	ff9ff06f          	j	10a58 <system_trap_handler+0x210>
 
-00010870 <HAL_UART_Init>:
+00010a64 <HAL_UART_Init>:
 
 // =========================================================
 // KHỞI TẠO UART
 // =========================================================
 void HAL_UART_Init(UART_HandleTypeDef *huart, uint32_t sys_clk, uint32_t baudrate) {
     if (huart == NULL || huart->Instance == NULL) return; 
-   10870:	02050e63          	beqz	a0,108ac <HAL_UART_Init+0x3c>
-   10874:	00052783          	lw	a5,0(a0) # 40001000 <_estack+0x1ffe1000>
-   10878:	02078a63          	beqz	a5,108ac <HAL_UART_Init+0x3c>
+   10a64:	02050e63          	beqz	a0,10aa0 <HAL_UART_Init+0x3c>
+   10a68:	00052783          	lw	a5,0(a0) # 40001000 <_estack+0x1ffe1000>
+   10a6c:	02078a63          	beqz	a5,10aa0 <HAL_UART_Init+0x3c>
 
     huart->State = HAL_UART_STATE_BUSY;
 
     // 1. Tính bộ chia cho TX (Chạy 1x - mỗi nhịp 1 bit)
     uint32_t tx_divisor = sys_clk / baudrate;
-   1087c:	02c5d733          	divu	a4,a1,a2
+   10a70:	02c5d733          	divu	a4,a1,a2
     
     // 2. Tính bộ chia cho RX (Chạy 16x - 16 nhịp mới được 1 bit)
     uint32_t rx_divisor = sys_clk / (baudrate * 16);
-   10880:	00461613          	slli	a2,a2,0x4
+   10a74:	00461613          	slli	a2,a2,0x4
     
     // 3. Ghi vào thanh ghi: [31:16] là RX_DIV, [15:0] là TX_DIV
     huart->Instance->CLK_DIV = (rx_divisor << 16) | (tx_divisor & 0xFFFF);
 
     // Bật RX interrupt, tắt TX interrupt và DMA
     huart->Instance->DMA_INT = 0x02;
-   10884:	00200813          	li	a6,2
+   10a78:	00200813          	li	a6,2
 
     huart->State = HAL_UART_STATE_READY;
-   10888:	00100693          	li	a3,1
+   10a7c:	00100693          	li	a3,1
     uint32_t rx_divisor = sys_clk / (baudrate * 16);
-   1088c:	02c5d5b3          	divu	a1,a1,a2
+   10a80:	02c5d5b3          	divu	a1,a1,a2
     huart->Instance->CLK_DIV = (rx_divisor << 16) | (tx_divisor & 0xFFFF);
-   10890:	01071713          	slli	a4,a4,0x10
-   10894:	01075713          	srli	a4,a4,0x10
-   10898:	01059593          	slli	a1,a1,0x10
-   1089c:	00e5e5b3          	or	a1,a1,a4
-   108a0:	00b7a023          	sw	a1,0(a5)
+   10a84:	01071713          	slli	a4,a4,0x10
+   10a88:	01075713          	srli	a4,a4,0x10
+   10a8c:	01059593          	slli	a1,a1,0x10
+   10a90:	00e5e5b3          	or	a1,a1,a4
+   10a94:	00b7a023          	sw	a1,0(a5)
     huart->Instance->DMA_INT = 0x02;
-   108a4:	0107a823          	sw	a6,16(a5)
+   10a98:	0107a823          	sw	a6,16(a5)
     huart->State = HAL_UART_STATE_READY;
-   108a8:	00d52223          	sw	a3,4(a0)
+   10a9c:	00d52223          	sw	a3,4(a0)
 }
-   108ac:	00008067          	ret
+   10aa0:	00008067          	ret
 
-000108b0 <HAL_UART_Transmit>:
+00010aa4 <HAL_UART_Transmit>:
 
 // =========================================================
 // TRUYỀN DỮ LIỆU (POLLING)
 // =========================================================
 void HAL_UART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size) {
     if (huart->State != HAL_UART_STATE_READY) return; 
-   108b0:	00452703          	lw	a4,4(a0)
-   108b4:	00100793          	li	a5,1
-   108b8:	04f71c63          	bne	a4,a5,10910 <HAL_UART_Transmit+0x60>
+   10aa4:	00452703          	lw	a4,4(a0)
+   10aa8:	00100793          	li	a5,1
+   10aac:	04f71c63          	bne	a4,a5,10b04 <HAL_UART_Transmit+0x60>
     if (pData == NULL || Size == 0) return;
-   108bc:	04058a63          	beqz	a1,10910 <HAL_UART_Transmit+0x60>
-   108c0:	04060863          	beqz	a2,10910 <HAL_UART_Transmit+0x60>
+   10ab0:	04058a63          	beqz	a1,10b04 <HAL_UART_Transmit+0x60>
+   10ab4:	04060863          	beqz	a2,10b04 <HAL_UART_Transmit+0x60>
 
     huart->State = HAL_UART_STATE_BUSY_TX;
 
     for (uint16_t i = 0; i < Size; i++) {
         // Nếu FIFO đầy thì chờ
         while ((huart->Instance->STATUS & (1 << 2)) != 0) {
-   108c4:	00052703          	lw	a4,0(a0)
+   10ab8:	00052703          	lw	a4,0(a0)
     huart->State = HAL_UART_STATE_BUSY_TX;
-   108c8:	00300793          	li	a5,3
-   108cc:	00f52223          	sw	a5,4(a0)
+   10abc:	00300793          	li	a5,3
+   10ac0:	00f52223          	sw	a5,4(a0)
         while ((huart->Instance->STATUS & (1 << 2)) != 0) {
-   108d0:	00000693          	li	a3,0
-   108d4:	00c72783          	lw	a5,12(a4)
-   108d8:	0047f793          	andi	a5,a5,4
-   108dc:	fe079ce3          	bnez	a5,108d4 <HAL_UART_Transmit+0x24>
+   10ac4:	00000693          	li	a3,0
+   10ac8:	00c72783          	lw	a5,12(a4)
+   10acc:	0047f793          	andi	a5,a5,4
+   10ad0:	fe079ce3          	bnez	a5,10ac8 <HAL_UART_Transmit+0x24>
         }
         
         // Ghi từng byte vào TX
         huart->Instance->TX_DATA = pData[i];
-   108e0:	00d587b3          	add	a5,a1,a3
-   108e4:	0007c803          	lbu	a6,0(a5)
+   10ad4:	00d587b3          	add	a5,a1,a3
+   10ad8:	0007c803          	lbu	a6,0(a5)
     for (uint16_t i = 0; i < Size; i++) {
-   108e8:	00168693          	addi	a3,a3,1
-   108ec:	01069793          	slli	a5,a3,0x10
-   108f0:	0107d793          	srli	a5,a5,0x10
+   10adc:	00168693          	addi	a3,a3,1
+   10ae0:	01069793          	slli	a5,a3,0x10
+   10ae4:	0107d793          	srli	a5,a5,0x10
         huart->Instance->TX_DATA = pData[i];
-   108f4:	01072223          	sw	a6,4(a4)
+   10ae8:	01072223          	sw	a6,4(a4)
     for (uint16_t i = 0; i < Size; i++) {
-   108f8:	fcc7eee3          	bltu	a5,a2,108d4 <HAL_UART_Transmit+0x24>
+   10aec:	fcc7eee3          	bltu	a5,a2,10ac8 <HAL_UART_Transmit+0x24>
     }
 
     // Chờ gửi xong hẳn (shift register rỗng)
     while ((huart->Instance->STATUS & (1 << 4)) != 0);
-   108fc:	00c72783          	lw	a5,12(a4)
-   10900:	0107f793          	andi	a5,a5,16
-   10904:	fe079ce3          	bnez	a5,108fc <HAL_UART_Transmit+0x4c>
+   10af0:	00c72783          	lw	a5,12(a4)
+   10af4:	0107f793          	andi	a5,a5,16
+   10af8:	fe079ce3          	bnez	a5,10af0 <HAL_UART_Transmit+0x4c>
 
     huart->State = HAL_UART_STATE_READY;
-   10908:	00100793          	li	a5,1
-   1090c:	00f52223          	sw	a5,4(a0)
+   10afc:	00100793          	li	a5,1
+   10b00:	00f52223          	sw	a5,4(a0)
 }
-   10910:	00008067          	ret
+   10b04:	00008067          	ret
 
-00010914 <HAL_UART_Transmit_DMA>:
+00010b08 <HAL_UART_Transmit_DMA>:
 
 // =========================================================
 // TRUYỀN BẰNG DMA (NON-BLOCKING)
 // =========================================================
 void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch,  uint8_t *pData, uint16_t Size, uint8_t periph_num) {
     if (huart->State != HAL_UART_STATE_READY) return;
-   10914:	00452803          	lw	a6,4(a0)
-   10918:	00100313          	li	t1,1
-   1091c:	00680463          	beq	a6,t1,10924 <HAL_UART_Transmit_DMA+0x10>
-   10920:	00008067          	ret
+   10b08:	00452803          	lw	a6,4(a0)
+   10b0c:	00100313          	li	t1,1
+   10b10:	00680463          	beq	a6,t1,10b18 <HAL_UART_Transmit_DMA+0x10>
+   10b14:	00008067          	ret
     if (pData == NULL || Size == 0 || dma_ch == NULL) return;
-   10924:	0016b793          	seqz	a5,a3
-   10928:	00163313          	seqz	t1,a2
-   1092c:	00f367b3          	or	a5,t1,a5
-   10930:	fe0798e3          	bnez	a5,10920 <HAL_UART_Transmit_DMA+0xc>
-   10934:	fe0586e3          	beqz	a1,10920 <HAL_UART_Transmit_DMA+0xc>
+   10b18:	0016b793          	seqz	a5,a3
+   10b1c:	00163313          	seqz	t1,a2
+   10b20:	00f367b3          	or	a5,t1,a5
+   10b24:	fe0798e3          	bnez	a5,10b14 <HAL_UART_Transmit_DMA+0xc>
+   10b28:	fe0586e3          	beqz	a1,10b14 <HAL_UART_Transmit_DMA+0xc>
     huart->State = HAL_UART_STATE_BUSY_TX;
 
     // src: RAM (tăng địa chỉ), dst: TX register (giữ nguyên)
     HAL_DMA_Config(dma_ch, 
                    (uint32_t)pData, 
                    (uint32_t)&(huart->Instance->TX_DATA), 
-   10938:	00052783          	lw	a5,0(a0)
+   10b2c:	00052783          	lw	a5,0(a0)
 void HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch,  uint8_t *pData, uint16_t Size, uint8_t periph_num) {
-   1093c:	fe010113          	addi	sp,sp,-32
-   10940:	00112e23          	sw	ra,28(sp)
-   10944:	00070893          	mv	a7,a4
+   10b30:	fe010113          	addi	sp,sp,-32
+   10b34:	00112e23          	sw	ra,28(sp)
+   10b38:	00070893          	mv	a7,a4
     huart->State = HAL_UART_STATE_BUSY_TX;
-   10948:	00300713          	li	a4,3
-   1094c:	00e52223          	sw	a4,4(a0)
-   10950:	00a12623          	sw	a0,12(sp)
+   10b3c:	00300713          	li	a4,3
+   10b40:	00e52223          	sw	a4,4(a0)
+   10b44:	00a12623          	sw	a0,12(sp)
     HAL_DMA_Config(dma_ch, 
-   10954:	00b12423          	sw	a1,8(sp)
-   10958:	00058513          	mv	a0,a1
-   1095c:	00080713          	mv	a4,a6
-   10960:	00060593          	mv	a1,a2
-   10964:	00478613          	addi	a2,a5,4
-   10968:	00000793          	li	a5,0
-   1096c:	93dff0ef          	jal	102a8 <HAL_DMA_Config>
+   10b48:	00b12423          	sw	a1,8(sp)
+   10b4c:	00058513          	mv	a0,a1
+   10b50:	00080713          	mv	a4,a6
+   10b54:	00060593          	mv	a1,a2
+   10b58:	00478613          	addi	a2,a5,4
+   10b5c:	00000793          	li	a5,0
+   10b60:	f74ff0ef          	jal	102d4 <HAL_DMA_Config>
                    Size, 
                    1, 0, 1, periph_num);
 
     // Start DMA
     HAL_DMA_Start(dma_ch);
-   10970:	00812503          	lw	a0,8(sp)
-   10974:	98dff0ef          	jal	10300 <HAL_DMA_Start>
+   10b64:	00812503          	lw	a0,8(sp)
+   10b68:	fc4ff0ef          	jal	1032c <HAL_DMA_Start>
 
     // Bật TX DMA request
     huart->Instance->DMA_INT |= (1 << 2);
-   10978:	00c12303          	lw	t1,12(sp)
+   10b6c:	00c12303          	lw	t1,12(sp)
 }
-   1097c:	01c12083          	lw	ra,28(sp)
+   10b70:	01c12083          	lw	ra,28(sp)
     huart->Instance->DMA_INT |= (1 << 2);
-   10980:	00032703          	lw	a4,0(t1)
-   10984:	01072783          	lw	a5,16(a4)
-   10988:	0047e793          	ori	a5,a5,4
-   1098c:	00f72823          	sw	a5,16(a4)
+   10b74:	00032703          	lw	a4,0(t1)
+   10b78:	01072783          	lw	a5,16(a4)
+   10b7c:	0047e793          	ori	a5,a5,4
+   10b80:	00f72823          	sw	a5,16(a4)
 }
-   10990:	02010113          	addi	sp,sp,32
-   10994:	00008067          	ret
+   10b84:	02010113          	addi	sp,sp,32
+   10b88:	00008067          	ret
 
-00010998 <HAL_UART_Receive_DMA>:
+00010b8c <HAL_UART_Receive_DMA>:
 
 // =========================================================
 // NHẬN BẰNG DMA
 // =========================================================
 void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
     if (huart->State != HAL_UART_STATE_READY) return;
-   10998:	00452803          	lw	a6,4(a0)
-   1099c:	00100e13          	li	t3,1
-   109a0:	01c80463          	beq	a6,t3,109a8 <HAL_UART_Receive_DMA+0x10>
-   109a4:	00008067          	ret
+   10b8c:	00452803          	lw	a6,4(a0)
+   10b90:	00100e13          	li	t3,1
+   10b94:	01c80463          	beq	a6,t3,10b9c <HAL_UART_Receive_DMA+0x10>
+   10b98:	00008067          	ret
     if (pData == NULL || Size == 0 || dma_ch == NULL) return;
-   109a8:	00163793          	seqz	a5,a2
-   109ac:	0016b313          	seqz	t1,a3
-   109b0:	0067e7b3          	or	a5,a5,t1
-   109b4:	fe0798e3          	bnez	a5,109a4 <HAL_UART_Receive_DMA+0xc>
-   109b8:	fe0586e3          	beqz	a1,109a4 <HAL_UART_Receive_DMA+0xc>
+   10b9c:	00163793          	seqz	a5,a2
+   10ba0:	0016b313          	seqz	t1,a3
+   10ba4:	0067e7b3          	or	a5,a5,t1
+   10ba8:	fe0798e3          	bnez	a5,10b98 <HAL_UART_Receive_DMA+0xc>
+   10bac:	fe0586e3          	beqz	a1,10b98 <HAL_UART_Receive_DMA+0xc>
 
     huart->State = HAL_UART_STATE_BUSY_RX;
-   109bc:	00058e13          	mv	t3,a1
+   10bb0:	00058e13          	mv	t3,a1
 
     // src: RX register (fix), dst: RAM (tăng)
     HAL_DMA_Config(dma_ch, 
                    (uint32_t)&(huart->Instance->RX_DATA), 
-   109c0:	00052583          	lw	a1,0(a0)
+   10bb4:	00052583          	lw	a1,0(a0)
 void HAL_UART_Receive_DMA(UART_HandleTypeDef *huart, DMA_Channel_TypeDef *dma_ch, uint8_t *pData, uint16_t Size, uint8_t periph_num) {
-   109c4:	fe010113          	addi	sp,sp,-32
-   109c8:	00112e23          	sw	ra,28(sp)
+   10bb8:	fe010113          	addi	sp,sp,-32
+   10bbc:	00112e23          	sw	ra,28(sp)
     huart->State = HAL_UART_STATE_BUSY_RX;
-   109cc:	00400793          	li	a5,4
-   109d0:	00070893          	mv	a7,a4
-   109d4:	00f52223          	sw	a5,4(a0)
-   109d8:	00a12623          	sw	a0,12(sp)
+   10bc0:	00400793          	li	a5,4
+   10bc4:	00070893          	mv	a7,a4
+   10bc8:	00f52223          	sw	a5,4(a0)
+   10bcc:	00a12623          	sw	a0,12(sp)
     HAL_DMA_Config(dma_ch, 
-   109dc:	00080793          	mv	a5,a6
-   109e0:	00000713          	li	a4,0
-   109e4:	000e0513          	mv	a0,t3
-   109e8:	00858593          	addi	a1,a1,8
-   109ec:	01c12423          	sw	t3,8(sp)
-   109f0:	8b9ff0ef          	jal	102a8 <HAL_DMA_Config>
+   10bd0:	00080793          	mv	a5,a6
+   10bd4:	00000713          	li	a4,0
+   10bd8:	000e0513          	mv	a0,t3
+   10bdc:	00858593          	addi	a1,a1,8 # 8008 <_start-0x7ff8>
+   10be0:	01c12423          	sw	t3,8(sp)
+   10be4:	ef0ff0ef          	jal	102d4 <HAL_DMA_Config>
                    (uint32_t)pData, 
                    Size, 
                    0, 1, 1, periph_num);
 
     // Start DMA
     HAL_DMA_Start(dma_ch);
-   109f4:	00812503          	lw	a0,8(sp)
-   109f8:	909ff0ef          	jal	10300 <HAL_DMA_Start>
+   10be8:	00812503          	lw	a0,8(sp)
+   10bec:	f40ff0ef          	jal	1032c <HAL_DMA_Start>
 
     // Bật RX DMA request
     huart->Instance->DMA_INT |= (1 << 3);
-   109fc:	00c12303          	lw	t1,12(sp)
+   10bf0:	00c12303          	lw	t1,12(sp)
 }
-   10a00:	01c12083          	lw	ra,28(sp)
+   10bf4:	01c12083          	lw	ra,28(sp)
     huart->Instance->DMA_INT |= (1 << 3);
-   10a04:	00032703          	lw	a4,0(t1)
-   10a08:	01072783          	lw	a5,16(a4)
-   10a0c:	0087e793          	ori	a5,a5,8
-   10a10:	00f72823          	sw	a5,16(a4)
+   10bf8:	00032703          	lw	a4,0(t1)
+   10bfc:	01072783          	lw	a5,16(a4)
+   10c00:	0087e793          	ori	a5,a5,8
+   10c04:	00f72823          	sw	a5,16(a4)
 }
-   10a14:	02010113          	addi	sp,sp,32
-   10a18:	00008067          	ret
+   10c08:	02010113          	addi	sp,sp,32
+   10c0c:	00008067          	ret
 
 __attribute__((weak)) void HAL_UART_RxCallback(UART_HandleTypeDef *huart, uint8_t rx_data) {
     // Để trống cho user override ở main
-   10a1c:	00008067          	ret
+   10c10:	00008067          	ret
 
-00010a20 <HAL_UART_IRQHandler>:
+00010c14 <HAL_UART_IRQHandler>:
     if ((huart->Instance->STATUS & (1 << 3)) == 0) {
-   10a20:	00052703          	lw	a4,0(a0)
-   10a24:	00c72783          	lw	a5,12(a4)
-   10a28:	0087f793          	andi	a5,a5,8
-   10a2c:	00078463          	beqz	a5,10a34 <HAL_UART_IRQHandler+0x14>
+   10c14:	00052703          	lw	a4,0(a0)
+   10c18:	00c72783          	lw	a5,12(a4)
+   10c1c:	0087f793          	andi	a5,a5,8
+   10c20:	00078463          	beqz	a5,10c28 <HAL_UART_IRQHandler+0x14>
 }
-   10a30:	00008067          	ret
+   10c24:	00008067          	ret
         uint8_t rx_data = (uint8_t)(huart->Instance->RX_DATA & 0xFF);
-   10a34:	00872583          	lw	a1,8(a4)
+   10c28:	00872583          	lw	a1,8(a4)
         HAL_UART_RxCallback(huart, rx_data);
-   10a38:	0ff5f593          	zext.b	a1,a1
-   10a3c:	b91ff06f          	j	105cc <HAL_UART_RxCallback>
+   10c2c:	0ff5f593          	zext.b	a1,a1
+   10c30:	9c9ff06f          	j	105f8 <HAL_UART_RxCallback>
 
-00010a40 <HAL_WDT_Init>:
+00010c34 <HAL_WDT_Init>:
 #include "wdt.h"
 
 // Khởi tạo watchdog timer
 void HAL_WDT_Init(WDT_TypeDef *hwdt, uint32_t timeout_ticks) {
     if (hwdt == NULL) return;
-   10a40:	00050c63          	beqz	a0,10a58 <HAL_WDT_Init+0x18>
+   10c34:	00050c63          	beqz	a0,10c4c <HAL_WDT_Init+0x18>
 
     // Set thời gian timeout (tính theo số tick của clock)
     hwdt->LOAD = timeout_ticks;
-   10a44:	00b52023          	sw	a1,0(a0)
+   10c38:	00b52023          	sw	a1,0(a0)
 
     // Enable WDT + cho phép reset khi hết thời gian
     hwdt->CTRL = 0x03; 
-   10a48:	00300793          	li	a5,3
-   10a4c:	00f52423          	sw	a5,8(a0)
+   10c3c:	00300793          	li	a5,3
+   10c40:	00f52423          	sw	a5,8(a0)
 // Refresh watchdog (kick)
 void HAL_WDT_Refresh(WDT_TypeDef *hwdt) {
     if (hwdt == NULL) return;
     
     // Ghi giá trị vào FEED để reset bộ đếm
     hwdt->FEED = 0x1; 
-   10a50:	00100793          	li	a5,1
-   10a54:	00f52623          	sw	a5,12(a0)
+   10c44:	00100793          	li	a5,1
+   10c48:	00f52623          	sw	a5,12(a0)
 }
-   10a58:	00008067          	ret
+   10c4c:	00008067          	ret
 
-00010a5c <HAL_WDT_Refresh>:
+00010c50 <HAL_WDT_Refresh>:
     if (hwdt == NULL) return;
-   10a5c:	00050663          	beqz	a0,10a68 <HAL_WDT_Refresh+0xc>
+   10c50:	00050663          	beqz	a0,10c5c <HAL_WDT_Refresh+0xc>
     hwdt->FEED = 0x1; 
-   10a60:	00100793          	li	a5,1
-   10a64:	00f52623          	sw	a5,12(a0)
-   10a68:	00008067          	ret
-   10a6c:	0000                	.insn	2, 0x0000
-	...
+   10c54:	00100793          	li	a5,1
+   10c58:	00f52623          	sw	a5,12(a0)
+   10c5c:	00008067          	ret
 
-00010a70 <trap_entry>:
+00010c60 <trap_entry>:
 .global trap_entry
 .align 4 /* Vector ngắt  phải căn lề 4 byte */
 
 trap_entry:
     /* 1. Xin cấp phát 128 byte (32 thanh ghi x 4 byte) trên đỉnh Stack hiện tại */
     addi sp, sp, -128
-   10a70:	f8010113          	addi	sp,sp,-128
+   10c60:	f8010113          	addi	sp,sp,-128
 
     /* 2. Lưu toàn bộ 31 thanh ghi đa dụng (x1 đến x31) vào Stack (Bỏ qua x0 vì luôn bằng 0) */
     sw ra, 0(sp)
-   10a74:	00112023          	sw	ra,0(sp)
+   10c64:	00112023          	sw	ra,0(sp)
     sw t0, 4(sp)
-   10a78:	00512223          	sw	t0,4(sp)
+   10c68:	00512223          	sw	t0,4(sp)
     sw t1, 8(sp)
-   10a7c:	00612423          	sw	t1,8(sp)
+   10c6c:	00612423          	sw	t1,8(sp)
     sw t2, 12(sp)
-   10a80:	00712623          	sw	t2,12(sp)
+   10c70:	00712623          	sw	t2,12(sp)
     sw a0, 16(sp)
-   10a84:	00a12823          	sw	a0,16(sp)
+   10c74:	00a12823          	sw	a0,16(sp)
     sw a1, 20(sp)
-   10a88:	00b12a23          	sw	a1,20(sp)
+   10c78:	00b12a23          	sw	a1,20(sp)
     sw a2, 24(sp)
-   10a8c:	00c12c23          	sw	a2,24(sp)
+   10c7c:	00c12c23          	sw	a2,24(sp)
     sw a3, 28(sp)
-   10a90:	00d12e23          	sw	a3,28(sp)
+   10c80:	00d12e23          	sw	a3,28(sp)
     sw a4, 32(sp)
-   10a94:	02e12023          	sw	a4,32(sp)
+   10c84:	02e12023          	sw	a4,32(sp)
     sw a5, 36(sp)
-   10a98:	02f12223          	sw	a5,36(sp)
+   10c88:	02f12223          	sw	a5,36(sp)
     sw a6, 40(sp)
-   10a9c:	03012423          	sw	a6,40(sp)
+   10c8c:	03012423          	sw	a6,40(sp)
     sw a7, 44(sp)
-   10aa0:	03112623          	sw	a7,44(sp)
+   10c90:	03112623          	sw	a7,44(sp)
     sw t3, 48(sp)
-   10aa4:	03c12823          	sw	t3,48(sp)
+   10c94:	03c12823          	sw	t3,48(sp)
     sw t4, 52(sp)
-   10aa8:	03d12a23          	sw	t4,52(sp)
+   10c98:	03d12a23          	sw	t4,52(sp)
     sw t5, 56(sp)
-   10aac:	03e12c23          	sw	t5,56(sp)
+   10c9c:	03e12c23          	sw	t5,56(sp)
     sw t6, 60(sp)
-   10ab0:	03f12e23          	sw	t6,60(sp)
+   10ca0:	03f12e23          	sw	t6,60(sp)
 
     /* 3. Gọi hàm C xử lý ngắt tổng (Truyền mcause và mepc làm tham số a0, a1) */
     csrr a0, mcause
-   10ab4:	34202573          	csrr	a0,mcause
+   10ca4:	34202573          	csrr	a0,mcause
     csrr a1, mepc
-   10ab8:	341025f3          	csrr	a1,mepc
+   10ca8:	341025f3          	csrr	a1,mepc
     call system_trap_handler
-   10abc:	cf1ff0ef          	jal	107ac <system_trap_handler>
+   10cac:	b9dff0ef          	jal	10848 <system_trap_handler>
 
     /* 4. Phục hồi lại toàn bộ 31 thanh ghi từ Stack */
     lw ra, 0(sp)
-   10ac0:	00012083          	lw	ra,0(sp)
+   10cb0:	00012083          	lw	ra,0(sp)
     lw t0, 4(sp)
-   10ac4:	00412283          	lw	t0,4(sp)
+   10cb4:	00412283          	lw	t0,4(sp)
     lw t1, 8(sp)
-   10ac8:	00812303          	lw	t1,8(sp)
+   10cb8:	00812303          	lw	t1,8(sp)
     lw t2, 12(sp)
-   10acc:	00c12383          	lw	t2,12(sp)
+   10cbc:	00c12383          	lw	t2,12(sp)
     lw a0, 16(sp)
-   10ad0:	01012503          	lw	a0,16(sp)
+   10cc0:	01012503          	lw	a0,16(sp)
     lw a1, 20(sp)
-   10ad4:	01412583          	lw	a1,20(sp)
+   10cc4:	01412583          	lw	a1,20(sp)
     lw a2, 24(sp)
-   10ad8:	01812603          	lw	a2,24(sp)
+   10cc8:	01812603          	lw	a2,24(sp)
     lw a3, 28(sp)
-   10adc:	01c12683          	lw	a3,28(sp)
+   10ccc:	01c12683          	lw	a3,28(sp)
     lw a4, 32(sp)
-   10ae0:	02012703          	lw	a4,32(sp)
+   10cd0:	02012703          	lw	a4,32(sp)
     lw a5, 36(sp)
-   10ae4:	02412783          	lw	a5,36(sp)
+   10cd4:	02412783          	lw	a5,36(sp)
     lw a6, 40(sp)
-   10ae8:	02812803          	lw	a6,40(sp)
+   10cd8:	02812803          	lw	a6,40(sp)
     lw a7, 44(sp)
-   10aec:	02c12883          	lw	a7,44(sp)
+   10cdc:	02c12883          	lw	a7,44(sp)
     lw t3, 48(sp)
-   10af0:	03012e03          	lw	t3,48(sp)
+   10ce0:	03012e03          	lw	t3,48(sp)
     lw t4, 52(sp)
-   10af4:	03412e83          	lw	t4,52(sp)
+   10ce4:	03412e83          	lw	t4,52(sp)
     lw t5, 56(sp)
-   10af8:	03812f03          	lw	t5,56(sp)
+   10ce8:	03812f03          	lw	t5,56(sp)
     lw t6, 60(sp)
-   10afc:	03c12f83          	lw	t6,60(sp)
+   10cec:	03c12f83          	lw	t6,60(sp)
 
     /* 5. Trả lại 128 byte cho Stack */
     addi sp, sp, 128
-   10b00:	08010113          	addi	sp,sp,128
+   10cf0:	08010113          	addi	sp,sp,128
 
     /* 6. Lệnh MRET: Yêu cầu phần cứng quay lại dòng code C đang chạy dở trước khi bị ngắt */
-   10b04:	30200073          	mret
-   10b08:	00000013          	nop
-   10b0c:	00000013          	nop
-   10b10:	4548                	.insn	2, 0x4548
-   10b12:	4c4c                	.insn	2, 0x4c4c
-   10b14:	4952204f          	.insn	4, 0x4952204f
-   10b18:	562d4353          	.insn	4, 0x562d4353
-   10b1c:	5520                	.insn	2, 0x5520
-   10b1e:	5241                	.insn	2, 0x5241
-   10b20:	2054                	.insn	2, 0x2054
-   10b22:	4554                	.insn	2, 0x4554
-   10b24:	0a215453          	.insn	4, 0x0a215453
-   10b28:	0000                	.insn	2, 0x0000
-	...
+   10cf4:	30200073          	mret
+   10cf8:	00000013          	nop
+   10cfc:	00000013          	nop
+
+00010d00 <__udivdi3>:
+  DWunion rr;
+  UWtype d0, d1, n0, n1, n2;
+  UWtype q0, q1;
+  UWtype b, bm;
+
+  d0 = dd.s.low;
+   10d00:	00060713          	mv	a4,a2
+  d1 = dd.s.high;
+   10d04:	00068893          	mv	a7,a3
+  n0 = nn.s.low;
+   10d08:	00050813          	mv	a6,a0
+  n1 = nn.s.high;
+   10d0c:	00058313          	mv	t1,a1
+	}
+    }
+
+#else /* UDIV_NEEDS_NORMALIZATION */
+
+  if (d1 == 0)
+   10d10:	24069463          	bnez	a3,10f58 <__udivdi3+0x258>
+    {
+      if (d0 > n1)
+   10d14:	000117b7          	lui	a5,0x11
+   10d18:	16c78793          	addi	a5,a5,364 # 1116c <__clz_tab>
+   10d1c:	0ec5f463          	bgeu	a1,a2,10e04 <__udivdi3+0x104>
+	{
+	  /* 0q = nn / 0D */
+
+	  count_leading_zeros (bm, d0);
+   10d20:	000106b7          	lui	a3,0x10
+   10d24:	0cd67063          	bgeu	a2,a3,10de4 <__udivdi3+0xe4>
+   10d28:	10063693          	sltiu	a3,a2,256
+   10d2c:	0016b693          	seqz	a3,a3
+   10d30:	00369693          	slli	a3,a3,0x3
+   10d34:	00d65e33          	srl	t3,a2,a3
+   10d38:	01c787b3          	add	a5,a5,t3
+   10d3c:	0007c783          	lbu	a5,0(a5)
+   10d40:	00d787b3          	add	a5,a5,a3
+
+	  if (bm != 0)
+   10d44:	02000693          	li	a3,32
+   10d48:	00d78e63          	beq	a5,a3,10d64 <__udivdi3+0x64>
+	  count_leading_zeros (bm, d0);
+   10d4c:	40f686b3          	sub	a3,a3,a5
+	    {
+	      /* Normalize, i.e. make the most significant bit of the
+		 denominator set.  */
+
+	      d0 = d0 << bm;
+	      n1 = (n1 << bm) | (n0 >> (W_TYPE_SIZE - bm));
+   10d50:	00d59333          	sll	t1,a1,a3
+   10d54:	00f557b3          	srl	a5,a0,a5
+	      d0 = d0 << bm;
+   10d58:	00d61733          	sll	a4,a2,a3
+	      n1 = (n1 << bm) | (n0 >> (W_TYPE_SIZE - bm));
+   10d5c:	0067e333          	or	t1,a5,t1
+	      n0 = n0 << bm;
+   10d60:	00d51833          	sll	a6,a0,a3
+	    }
+
+	  udiv_qrnnd (q0, n0, n1, n0, d0);
+   10d64:	01075513          	srli	a0,a4,0x10
+   10d68:	02a357b3          	divu	a5,t1,a0
+   10d6c:	01071593          	slli	a1,a4,0x10
+   10d70:	0105d593          	srli	a1,a1,0x10
+   10d74:	01085693          	srli	a3,a6,0x10
+   10d78:	02a37333          	remu	t1,t1,a0
+   10d7c:	02f58633          	mul	a2,a1,a5
+   10d80:	01031313          	slli	t1,t1,0x10
+   10d84:	0066e6b3          	or	a3,a3,t1
+   10d88:	00c6fa63          	bgeu	a3,a2,10d9c <__udivdi3+0x9c>
+   10d8c:	00d706b3          	add	a3,a4,a3
+   10d90:	00c6f463          	bgeu	a3,a2,10d98 <__udivdi3+0x98>
+   10d94:	06e6f263          	bgeu	a3,a4,10df8 <__udivdi3+0xf8>
+   10d98:	fff78793          	addi	a5,a5,-1
+   10d9c:	40c686b3          	sub	a3,a3,a2
+	      udiv_qrnnd (q1, n1, n2, n1, d0);
+	    }
+
+	  /* n1 != d0...  */
+
+	  udiv_qrnnd (q0, n0, n1, n0, d0);
+   10da0:	02a6d633          	divu	a2,a3,a0
+   10da4:	01081813          	slli	a6,a6,0x10
+   10da8:	01085813          	srli	a6,a6,0x10
+   10dac:	02a6f6b3          	remu	a3,a3,a0
+   10db0:	02c585b3          	mul	a1,a1,a2
+   10db4:	01069693          	slli	a3,a3,0x10
+   10db8:	00d86833          	or	a6,a6,a3
+   10dbc:	00b87a63          	bgeu	a6,a1,10dd0 <__udivdi3+0xd0>
+   10dc0:	01070833          	add	a6,a4,a6
+   10dc4:	00b87463          	bgeu	a6,a1,10dcc <__udivdi3+0xcc>
+   10dc8:	18e87463          	bgeu	a6,a4,10f50 <__udivdi3+0x250>
+   10dcc:	fff60613          	addi	a2,a2,-1
+   10dd0:	01079793          	slli	a5,a5,0x10
+   10dd4:	00c7e7b3          	or	a5,a5,a2
+#ifdef L_udivdi3
+UDWtype
+__udivdi3 (UDWtype n, UDWtype d)
+{
+  return __udivmoddi4 (n, d, (UDWtype *) 0);
+}
+   10dd8:	00078513          	mv	a0,a5
+   10ddc:	00088593          	mv	a1,a7
+   10de0:	00008067          	ret
+	  count_leading_zeros (bm, d0);
+   10de4:	01000e37          	lui	t3,0x1000
+   10de8:	01800693          	li	a3,24
+   10dec:	f5c674e3          	bgeu	a2,t3,10d34 <__udivdi3+0x34>
+   10df0:	01000693          	li	a3,16
+   10df4:	f41ff06f          	j	10d34 <__udivdi3+0x34>
+	  udiv_qrnnd (q0, n0, n1, n0, d0);
+   10df8:	ffe78793          	addi	a5,a5,-2
+   10dfc:	00e686b3          	add	a3,a3,a4
+   10e00:	f9dff06f          	j	10d9c <__udivdi3+0x9c>
+	  count_leading_zeros (bm, d0);
+   10e04:	00000693          	li	a3,0
+	  if (d0 == 0)
+   10e08:	00060c63          	beqz	a2,10e20 <__udivdi3+0x120>
+	  count_leading_zeros (bm, d0);
+   10e0c:	000106b7          	lui	a3,0x10
+   10e10:	06d67863          	bgeu	a2,a3,10e80 <__udivdi3+0x180>
+   10e14:	10063693          	sltiu	a3,a2,256
+   10e18:	0016b693          	seqz	a3,a3
+   10e1c:	00369693          	slli	a3,a3,0x3
+   10e20:	00d658b3          	srl	a7,a2,a3
+   10e24:	011787b3          	add	a5,a5,a7
+   10e28:	0007c783          	lbu	a5,0(a5)
+   10e2c:	00d787b3          	add	a5,a5,a3
+	  if (bm == 0)
+   10e30:	02000693          	li	a3,32
+   10e34:	06d79063          	bne	a5,a3,10e94 <__udivdi3+0x194>
+	      n1 -= d0;
+   10e38:	40c58633          	sub	a2,a1,a2
+	      q1 = 1;
+   10e3c:	00100893          	li	a7,1
+	  udiv_qrnnd (q0, n0, n1, n0, d0);
+   10e40:	01075513          	srli	a0,a4,0x10
+   10e44:	02a657b3          	divu	a5,a2,a0
+   10e48:	01071593          	slli	a1,a4,0x10
+   10e4c:	0105d593          	srli	a1,a1,0x10
+   10e50:	01085693          	srli	a3,a6,0x10
+   10e54:	02a67633          	remu	a2,a2,a0
+   10e58:	02f58333          	mul	t1,a1,a5
+   10e5c:	01061613          	slli	a2,a2,0x10
+   10e60:	00c6e6b3          	or	a3,a3,a2
+   10e64:	0066fa63          	bgeu	a3,t1,10e78 <__udivdi3+0x178>
+   10e68:	00d706b3          	add	a3,a4,a3
+   10e6c:	0066f463          	bgeu	a3,t1,10e74 <__udivdi3+0x174>
+   10e70:	0ce6fa63          	bgeu	a3,a4,10f44 <__udivdi3+0x244>
+   10e74:	fff78793          	addi	a5,a5,-1
+   10e78:	406686b3          	sub	a3,a3,t1
+   10e7c:	f25ff06f          	j	10da0 <__udivdi3+0xa0>
+	  count_leading_zeros (bm, d0);
+   10e80:	010008b7          	lui	a7,0x1000
+   10e84:	01800693          	li	a3,24
+   10e88:	f9167ce3          	bgeu	a2,a7,10e20 <__udivdi3+0x120>
+   10e8c:	01000693          	li	a3,16
+   10e90:	f91ff06f          	j	10e20 <__udivdi3+0x120>
+   10e94:	40f68833          	sub	a6,a3,a5
+	      d0 = d0 << bm;
+   10e98:	01061733          	sll	a4,a2,a6
+	      n2 = n1 >> b;
+   10e9c:	00f5d6b3          	srl	a3,a1,a5
+	      n1 = (n1 << bm) | (n0 >> b);
+   10ea0:	010595b3          	sll	a1,a1,a6
+   10ea4:	00f557b3          	srl	a5,a0,a5
+	      n0 = n0 << bm;
+   10ea8:	01051833          	sll	a6,a0,a6
+	      udiv_qrnnd (q1, n1, n2, n1, d0);
+   10eac:	01075513          	srli	a0,a4,0x10
+   10eb0:	02a6d8b3          	divu	a7,a3,a0
+   10eb4:	01071613          	slli	a2,a4,0x10
+   10eb8:	01065613          	srli	a2,a2,0x10
+	      n1 = (n1 << bm) | (n0 >> b);
+   10ebc:	00b7e7b3          	or	a5,a5,a1
+	      udiv_qrnnd (q1, n1, n2, n1, d0);
+   10ec0:	02a6f6b3          	remu	a3,a3,a0
+   10ec4:	03160333          	mul	t1,a2,a7
+   10ec8:	01069593          	slli	a1,a3,0x10
+   10ecc:	0107d693          	srli	a3,a5,0x10
+   10ed0:	00b6e6b3          	or	a3,a3,a1
+   10ed4:	0066fa63          	bgeu	a3,t1,10ee8 <__udivdi3+0x1e8>
+   10ed8:	00d706b3          	add	a3,a4,a3
+   10edc:	0066f463          	bgeu	a3,t1,10ee4 <__udivdi3+0x1e4>
+   10ee0:	04e6f663          	bgeu	a3,a4,10f2c <__udivdi3+0x22c>
+   10ee4:	fff88893          	addi	a7,a7,-1 # ffffff <_edtcm+0xfdbfff>
+   10ee8:	406686b3          	sub	a3,a3,t1
+   10eec:	02a6d5b3          	divu	a1,a3,a0
+   10ef0:	01079793          	slli	a5,a5,0x10
+   10ef4:	0107d793          	srli	a5,a5,0x10
+   10ef8:	02a6f6b3          	remu	a3,a3,a0
+   10efc:	02b60633          	mul	a2,a2,a1
+   10f00:	01069693          	slli	a3,a3,0x10
+   10f04:	00d7e7b3          	or	a5,a5,a3
+   10f08:	00c7fa63          	bgeu	a5,a2,10f1c <__udivdi3+0x21c>
+   10f0c:	00f707b3          	add	a5,a4,a5
+   10f10:	00c7f463          	bgeu	a5,a2,10f18 <__udivdi3+0x218>
+   10f14:	02e7f263          	bgeu	a5,a4,10f38 <__udivdi3+0x238>
+   10f18:	fff58593          	addi	a1,a1,-1
+   10f1c:	01089893          	slli	a7,a7,0x10
+   10f20:	40c78633          	sub	a2,a5,a2
+   10f24:	00b8e8b3          	or	a7,a7,a1
+   10f28:	f19ff06f          	j	10e40 <__udivdi3+0x140>
+   10f2c:	ffe88893          	addi	a7,a7,-2
+   10f30:	00e686b3          	add	a3,a3,a4
+   10f34:	fb5ff06f          	j	10ee8 <__udivdi3+0x1e8>
+   10f38:	ffe58593          	addi	a1,a1,-2
+   10f3c:	00e787b3          	add	a5,a5,a4
+   10f40:	fddff06f          	j	10f1c <__udivdi3+0x21c>
+	  udiv_qrnnd (q0, n0, n1, n0, d0);
+   10f44:	ffe78793          	addi	a5,a5,-2
+   10f48:	00e686b3          	add	a3,a3,a4
+   10f4c:	f2dff06f          	j	10e78 <__udivdi3+0x178>
+   10f50:	ffe60613          	addi	a2,a2,-2
+   10f54:	e7dff06f          	j	10dd0 <__udivdi3+0xd0>
+      if (d1 > n1)
+   10f58:	18d5e463          	bltu	a1,a3,110e0 <__udivdi3+0x3e0>
+	  count_leading_zeros (bm, d1);
+   10f5c:	000107b7          	lui	a5,0x10
+   10f60:	04f6f463          	bgeu	a3,a5,10fa8 <__udivdi3+0x2a8>
+   10f64:	1006b793          	sltiu	a5,a3,256
+   10f68:	0017b793          	seqz	a5,a5
+   10f6c:	00379793          	slli	a5,a5,0x3
+   10f70:	00011737          	lui	a4,0x11
+   10f74:	00f6d833          	srl	a6,a3,a5
+   10f78:	16c70713          	addi	a4,a4,364 # 1116c <__clz_tab>
+   10f7c:	01070733          	add	a4,a4,a6
+   10f80:	00074703          	lbu	a4,0(a4)
+	  if (bm == 0)
+   10f84:	02000813          	li	a6,32
+	  count_leading_zeros (bm, d1);
+   10f88:	00f70733          	add	a4,a4,a5
+	  if (bm == 0)
+   10f8c:	03071863          	bne	a4,a6,10fbc <__udivdi3+0x2bc>
+	      if (n1 > d1 || n0 >= d0)
+   10f90:	00c537b3          	sltu	a5,a0,a2
+   10f94:	0017b793          	seqz	a5,a5
+   10f98:	00b6b6b3          	sltu	a3,a3,a1
+   10f9c:	00d7e7b3          	or	a5,a5,a3
+	      q1 = 0;
+   10fa0:	00000893          	li	a7,0
+   10fa4:	e35ff06f          	j	10dd8 <__udivdi3+0xd8>
+	  count_leading_zeros (bm, d1);
+   10fa8:	01000737          	lui	a4,0x1000
+   10fac:	01800793          	li	a5,24
+   10fb0:	fce6f0e3          	bgeu	a3,a4,10f70 <__udivdi3+0x270>
+   10fb4:	01000793          	li	a5,16
+   10fb8:	fb9ff06f          	j	10f70 <__udivdi3+0x270>
+   10fbc:	40e80833          	sub	a6,a6,a4
+	      d1 = (d1 << bm) | (d0 >> b);
+   10fc0:	00e658b3          	srl	a7,a2,a4
+   10fc4:	010696b3          	sll	a3,a3,a6
+   10fc8:	00d8e8b3          	or	a7,a7,a3
+	      udiv_qrnnd (q0, n1, n2, n1, d1);
+   10fcc:	0108de13          	srli	t3,a7,0x10
+	      n2 = n1 >> b;
+   10fd0:	00e5d6b3          	srl	a3,a1,a4
+	      udiv_qrnnd (q0, n1, n2, n1, d1);
+   10fd4:	03c6d7b3          	divu	a5,a3,t3
+   10fd8:	01089313          	slli	t1,a7,0x10
+   10fdc:	01035313          	srli	t1,t1,0x10
+	      n1 = (n1 << bm) | (n0 >> b);
+   10fe0:	010595b3          	sll	a1,a1,a6
+   10fe4:	00e55733          	srl	a4,a0,a4
+   10fe8:	00b76733          	or	a4,a4,a1
+	      d0 = d0 << bm;
+   10fec:	01061633          	sll	a2,a2,a6
+	      udiv_qrnnd (q0, n1, n2, n1, d1);
+   10ff0:	03c6f6b3          	remu	a3,a3,t3
+   10ff4:	02f30eb3          	mul	t4,t1,a5
+   10ff8:	01069593          	slli	a1,a3,0x10
+   10ffc:	01075693          	srli	a3,a4,0x10
+   11000:	00b6e6b3          	or	a3,a3,a1
+   11004:	01d6fa63          	bgeu	a3,t4,11018 <__udivdi3+0x318>
+   11008:	00d886b3          	add	a3,a7,a3
+   1100c:	01d6f463          	bgeu	a3,t4,11014 <__udivdi3+0x314>
+   11010:	0b16fc63          	bgeu	a3,a7,110c8 <__udivdi3+0x3c8>
+   11014:	fff78793          	addi	a5,a5,-1 # ffff <_start-0x1>
+   11018:	41d686b3          	sub	a3,a3,t4
+   1101c:	03c6d5b3          	divu	a1,a3,t3
+   11020:	01071713          	slli	a4,a4,0x10
+   11024:	01075713          	srli	a4,a4,0x10
+   11028:	03c6f6b3          	remu	a3,a3,t3
+   1102c:	02b30333          	mul	t1,t1,a1
+   11030:	01069693          	slli	a3,a3,0x10
+   11034:	00d76733          	or	a4,a4,a3
+   11038:	00677a63          	bgeu	a4,t1,1104c <__udivdi3+0x34c>
+   1103c:	00e88733          	add	a4,a7,a4
+   11040:	00677463          	bgeu	a4,t1,11048 <__udivdi3+0x348>
+   11044:	09177863          	bgeu	a4,a7,110d4 <__udivdi3+0x3d4>
+   11048:	fff58593          	addi	a1,a1,-1
+   1104c:	01079793          	slli	a5,a5,0x10
+   11050:	00b7e7b3          	or	a5,a5,a1
+   11054:	40670733          	sub	a4,a4,t1
+	      umul_ppmm (m1, m0, q0, d0);
+   11058:	01059593          	slli	a1,a1,0x10
+   1105c:	01061313          	slli	t1,a2,0x10
+   11060:	0105d593          	srli	a1,a1,0x10
+   11064:	0107d893          	srli	a7,a5,0x10
+   11068:	01035313          	srli	t1,t1,0x10
+   1106c:	01065613          	srli	a2,a2,0x10
+   11070:	02658e33          	mul	t3,a1,t1
+   11074:	02688333          	mul	t1,a7,t1
+   11078:	010e5693          	srli	a3,t3,0x10
+   1107c:	02c585b3          	mul	a1,a1,a2
+   11080:	006585b3          	add	a1,a1,t1
+   11084:	00b686b3          	add	a3,a3,a1
+   11088:	02c888b3          	mul	a7,a7,a2
+   1108c:	0066f663          	bgeu	a3,t1,11098 <__udivdi3+0x398>
+   11090:	00010637          	lui	a2,0x10
+   11094:	00c888b3          	add	a7,a7,a2
+   11098:	0106d613          	srli	a2,a3,0x10
+   1109c:	01160633          	add	a2,a2,a7
+	      if (m1 > n1 || (m1 == n1 && m0 > n0))
+   110a0:	02c76063          	bltu	a4,a2,110c0 <__udivdi3+0x3c0>
+	      umul_ppmm (m1, m0, q0, d0);
+   110a4:	010e1e13          	slli	t3,t3,0x10
+   110a8:	01069693          	slli	a3,a3,0x10
+   110ac:	010e5e13          	srli	t3,t3,0x10
+	      n0 = n0 << bm;
+   110b0:	01051533          	sll	a0,a0,a6
+	      umul_ppmm (m1, m0, q0, d0);
+   110b4:	01c686b3          	add	a3,a3,t3
+	      if (m1 > n1 || (m1 == n1 && m0 > n0))
+   110b8:	eed574e3          	bgeu	a0,a3,10fa0 <__udivdi3+0x2a0>
+   110bc:	eec712e3          	bne	a4,a2,10fa0 <__udivdi3+0x2a0>
+		  q0--;
+   110c0:	fff78793          	addi	a5,a5,-1
+		  sub_ddmmss (m1, m0, m1, m0, d1, d0);
+   110c4:	eddff06f          	j	10fa0 <__udivdi3+0x2a0>
+	      udiv_qrnnd (q0, n1, n2, n1, d1);
+   110c8:	ffe78793          	addi	a5,a5,-2
+   110cc:	011686b3          	add	a3,a3,a7
+   110d0:	f49ff06f          	j	11018 <__udivdi3+0x318>
+   110d4:	ffe58593          	addi	a1,a1,-2
+   110d8:	01170733          	add	a4,a4,a7
+   110dc:	f71ff06f          	j	1104c <__udivdi3+0x34c>
+	  q1 = 0;
+   110e0:	00000893          	li	a7,0
+	  q0 = 0;
+   110e4:	00000793          	li	a5,0
+   110e8:	cf1ff06f          	j	10dd8 <__udivdi3+0xd8>
+   110ec:	4548                	.insn	2, 0x4548
+   110ee:	4c4c                	.insn	2, 0x4c4c
+   110f0:	4952204f          	.insn	4, 0x4952204f
+   110f4:	562d4353          	.insn	4, 0x562d4353
+   110f8:	5520                	.insn	2, 0x5520
+   110fa:	5241                	.insn	2, 0x5241
+   110fc:	2054                	.insn	2, 0x2054
+   110fe:	4554                	.insn	2, 0x4554
+   11100:	0a215453          	.insn	4, 0x0a215453
+   11104:	0000                	.insn	2, 0x0000
+   11106:	0000                	.insn	2, 0x0000
+   11108:	5b0a                	.insn	2, 0x5b0a
+   1110a:	5254                	.insn	2, 0x5254
+   1110c:	5041                	.insn	2, 0x5041
+   1110e:	205d                	.insn	2, 0x205d
+   11110:	636d                	.insn	2, 0x636d
+   11112:	7561                	.insn	2, 0x7561
+   11114:	003d6573          	csrrsi	a0,fcsr,26
+   11118:	6d20                	.insn	2, 0x6d20
+   1111a:	7065                	.insn	2, 0x7065
+   1111c:	00003d63          	.insn	4, 0x3d63
+   11120:	6d20                	.insn	2, 0x6d20
+   11122:	7674                	.insn	2, 0x7674
+   11124:	6c61                	.insn	2, 0x6c61
+   11126:	003d                	.insn	2, 0x003d
+   11128:	4152545b          	.insn	4, 0x4152545b
+   1112c:	5d50                	.insn	2, 0x5d50
+   1112e:	4620                	.insn	2, 0x4620
+   11130:	5441                	.insn	2, 0x5441
+   11132:	4c41                	.insn	2, 0x4c41
+   11134:	203a                	.insn	2, 0x203a
+   11136:	6e6f686b          	.insn	4, 0x6e6f686b
+   1113a:	68742067          	.insn	4, 0x68742067
+   1113e:	2065                	.insn	2, 0x2065
+   11140:	6566                	.insn	2, 0x6566
+   11142:	6374                	.insn	2, 0x6374
+   11144:	2068                	.insn	2, 0x2068
+   11146:	6174                	.insn	2, 0x6174
+   11148:	2069                	.insn	2, 0x2069
+   1114a:	656d                	.insn	2, 0x656d
+   1114c:	6370                	.insn	2, 0x6370
+   1114e:	2d20                	.insn	2, 0x2d20
+   11150:	6420                	.insn	2, 0x6420
+   11152:	6e75                	.insn	2, 0x6e75
+   11154:	000a2e67          	.insn	4, 0x000a2e67
+
+00011158 <hexdig.0>:
+   11158:	33323130 37363534 42413938 46454443     0123456789ABCDEF
+   11168:	00000000                                ....
+
+0001116c <__clz_tab>:
+   1116c:	02020100 03030303 04040404 04040404     ................
+   1117c:	05050505 05050505 05050505 05050505     ................
+   1118c:	06060606 06060606 06060606 06060606     ................
+   1119c:	06060606 06060606 06060606 06060606     ................
+   111ac:	07070707 07070707 07070707 07070707     ................
+   111bc:	07070707 07070707 07070707 07070707     ................
+   111cc:	07070707 07070707 07070707 07070707     ................
+   111dc:	07070707 07070707 07070707 07070707     ................
+   111ec:	08080808 08080808 08080808 08080808     ................
+   111fc:	08080808 08080808 08080808 08080808     ................
+   1120c:	08080808 08080808 08080808 08080808     ................
+   1121c:	08080808 08080808 08080808 08080808     ................
+   1122c:	08080808 08080808 08080808 08080808     ................
+   1123c:	08080808 08080808 08080808 08080808     ................
+   1124c:	08080808 08080808 08080808 08080808     ................
+   1125c:	08080808 08080808 08080808 08080808     ................
