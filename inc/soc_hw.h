@@ -23,12 +23,43 @@
 #define WATCHDOG_BASE       (APB_BRIDGE_BASE + 0x5000) // S5: Watchdog
 #define ACCELERATOR_BASE    (APB_BRIDGE_BASE + 0x6000) // S6: CORDIC
 #define SYSCON_BASE         (APB_BRIDGE_BASE + 0x7000) // S7: System Control
-#define PLIC_BASE           0x44000000  // S8: PLIC window decoded by APB interconnect
+#define PLIC_BASE           0x44000000  // S8: (cu) - tu 2026-09-11 la CLIC, xem duoi
 #define DMA_CFG_BASE        (APB_BRIDGE_BASE + 0x8000)
+#define ASCON_BASE          (APB_BRIDGE_BASE + 0xC000) // S10: ASCON + TRNG
+// 2026-09-11 - muc 8 review
+#define UART1_BASE          (APB_BRIDGE_BASE + 0xD000) // S11: UART1 (cung thanh ghi voi UART0)
+#define TIM0_BASE           (APB_BRIDGE_BASE + 0xE000) // S12: timer 4 kenh (inc/timer.h)
+#define TIM1_BASE           (APB_BRIDGE_BASE + 0xF000) // S13: timer 4 kenh
+#define PINMUX_BASE         0x40020000                 // S14: pinmux 32 pad (inc/pinmux.h)
+#define CLIC_BASE           0x44000000                 // S8 : CLIC (inc/clic.h), thay PLIC
+
+/* =========================================================
+ * 2b. CLIC INTERRUPT ID (2026-09-11) - mcause.exccode = ID,
+ *     vector = mtvec_base + 4 * ID khi clicintattr.shv = 1.
+ * ========================================================= */
+#define CLIC_ID_MSIP        3
+#define CLIC_ID_MTIP        7
+#define CLIC_ID_UART0       16
+#define CLIC_ID_UART1       17
+#define CLIC_ID_GPIO        18
+#define CLIC_ID_SPI         19
+#define CLIC_ID_I2C         20
+#define CLIC_ID_WDT         21
+#define CLIC_ID_DMA_CH0     22   // moi kenh DMA mot ID rieng
+#define CLIC_ID_DMA_CH1     23
+#define CLIC_ID_DMA_CH2     24
+#define CLIC_ID_DMA_CH3     25
+#define CLIC_ID_DCACHE_BERR 26   // loi bus cua store buffer D$ (mac dinh canh len)
+#define CLIC_ID_ASCON       27
+#define CLIC_ID_TIM0        28
+#define CLIC_ID_TIM1        29
 
 
 /* =========================================================
- * 3. PLIC IRQ MAPPING
+ * 3. PLIC IRQ MAPPING - CU. RTL khong con PLIC tu 2026-09-11: lenh ghi toi
+ *    0x4400_xxxx ngoai 8 KB dau cua CLIC bi bo qua, doc ra 0 (plic_claim tra
+ *    0). Giu lai de plic.c / trap.c hien tai van bien dich; chuyen sang
+ *    inc/clic.h va CLIC_ID_* o tren.
  * ========================================================= */
 #define IRQ_UART        1   // Ngắt UART
 #define IRQ_GPIO        2   // Ngắt GPIO

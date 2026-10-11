@@ -11,7 +11,9 @@
 
 #if CONFIG_HAS_UART
 #include "../inc/uart.h"
-#define UART_CLK 100000000
+// UART chay bang clock he thong duy nhat 250 MHz tu 2026-09-11 (truoc day
+// la uart_clk 100 MHz rieng). 115200 baud -> TX_DIV 2170, RX_DIV 135.
+#define UART_CLK 250000000
 UART_HandleTypeDef huart0;
 #endif
 

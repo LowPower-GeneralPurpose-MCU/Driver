@@ -131,11 +131,11 @@ void system_trap_handler(uint32_t mcause, uint32_t mepc) {
 
         // Đặt lại thời điểm ngắt tiếp theo (1000ms sau).
         //
-        // PHẢI là RTC_CLOCK_HZ, KHÔNG phải bus clock. mtime của CLINT đếm theo
-        // `rtc_tick` - xung phát hiện cạnh của rtc_toggle_r đồng bộ 3FF từ
-        // rtc_clk_i sang clk_i (clint_core.v:125-157). Tức mtime chạy 32768 Hz.
-        // Truyền 200 MHz vào đây đặt mtimecmp cách hiện tại 200e6 tick, ở
-        // 32.768 kHz là ~6103 giây (~1.7 giờ) chứ không phải 1 giây.
+        // PHẢI là RTC_CLOCK_HZ, KHÔNG phải clock hệ thống. mtime của CLINT đếm
+        // theo `rtc_tick` - xung bắt cạnh lên của chân rtc_clk, lấy mẫu 2FF bằng
+        // clk 250 MHz (top_soc.v, mục 1). Tức mtime chạy 32768 Hz.
+        // Truyền 250 MHz vào đây đặt mtimecmp cách hiện tại 250e6 tick, ở
+        // 32.768 kHz là ~7629 giây (~2.1 giờ) chứ không phải 1 giây.
         clint_set_timer_ms(1000, RTC_CLOCK_HZ); 
     } 
     

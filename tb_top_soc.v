@@ -53,8 +53,8 @@ module tb_top_soc();
         end
     endfunction
 
-    // Clock signals
-    reg clk_400m, clk_200m, clk_100m, rtc_clk;
+    // Clock signals - SoC chi con MOT clock he thong tu 2026-09-11 (clk 250 MHz)
+    reg clk, rtc_clk;
     reg rst_n;
 
     // JTAG interface
@@ -80,11 +80,9 @@ module tb_top_soc();
     wire [15:0] sdram_dq; // Sửa lại thành 16 bit
 
     // ========================================================
-    // Tạo các clock với tần số khác nhau
+    // Clock
     // ========================================================
-    initial begin clk_400m = 0; forever #1.25  clk_400m = ~clk_400m; end // 400 MHz
-    initial begin clk_200m = 0; forever #2.5   clk_200m = ~clk_200m; end // 200 MHz
-    initial begin clk_100m = 0; forever #5.0   clk_100m = ~clk_100m; end // 100 MHz
+    initial begin clk      = 0; forever #2.0   clk      = ~clk;      end // 250 MHz
     initial begin rtc_clk  = 0; forever #15258 rtc_clk  = ~rtc_clk;  end // ~32 kHz
 
     // ========================================================
@@ -101,6 +99,19 @@ module tb_top_soc();
     wire [15:0] dut_sdram_dq_o;
     wire        dut_sdram_dq_oe;
 
+    // Pad: PA0 la UART0_TX, PA1 (UART0_RX) nhan vong lap uart_rx, cac pad khac
+    // la GPIO vao. SPI/I2C/PWM khong con la chan top: lay tu ben trong uut.
+    wire [31:0] pad_in_w = {gpio_in[31:2], uart_rx, gpio_in[0]};
+    assign uart_tx        = gpio_out[0];
+    assign pwm_out        = uut.pwm_out;
+    assign spi_sck        = uut.spi_sck;
+    assign spi_mosi       = uut.spi_mosi;
+    assign spi_ss         = uut.spi_ss;
+    assign dut_i2c_scl_o  = uut.i2c_scl_o;
+    assign dut_i2c_scl_oe = uut.i2c_scl_oe;
+    assign dut_i2c_sda_o  = uut.i2c_sda_o;
+    assign dut_i2c_sda_oe = uut.i2c_sda_oe;
+
     assign i2c_scl     = dut_i2c_scl_oe    ? dut_i2c_scl_o    : 1'bz;
     assign i2c_sda     = dut_i2c_sda_oe    ? dut_i2c_sda_o    : 1'bz;
     assign flash_io[0] = dut_flash_io_oe[0] ? dut_flash_io_o[0] : 1'bz;
@@ -110,34 +121,17 @@ module tb_top_soc();
     assign sdram_dq    = dut_sdram_dq_oe   ? dut_sdram_dq_o   : 16'hzzzz;
 
     top_soc uut (
-        .clk_core      (clk_400m),
-        .clk_axi       (clk_200m),
-        .clk_apb       (clk_100m),
-        
-        .clk_sdram_ext (clk_200m),
-        .uart_clk      (clk_100m),
-        .spi_clk       (clk_100m),
-        .i2c_clk       (clk_100m),
+        .clk           (clk),
         .rtc_clk       (rtc_clk),
         .rst_n         (rst_n),
 
         .tck(tck), .trst_n(trst_n), .tms(tms), .tdi(tdi), .tdo(tdo),
 
-        .uart_rx(uart_rx),
-        .uart_tx(uart_tx),
-
-        .gpio_in(gpio_in),
-        .gpio_out(gpio_out),
-        .gpio_oe(gpio_oe),
-        .pwm_out(pwm_out),
-
-        .spi_sck(spi_sck),    
-        .spi_mosi(spi_mosi),
-        .spi_miso(spi_miso),
-        .spi_ss(spi_ss), 
-
-        .i2c_scl_i(i2c_scl), .i2c_scl_o(dut_i2c_scl_o), .i2c_scl_oe(dut_i2c_scl_oe),
-        .i2c_sda_i(i2c_sda), .i2c_sda_o(dut_i2c_sda_o), .i2c_sda_oe(dut_i2c_sda_oe),
+        // 2026-09-11: 32 pad qua pinmux. Mac dinh sau reset PA0 = UART0_TX,
+        // PA1 = UART0_RX - firmware (khong biet pinmux) van in ra PA0.
+        .pad_in (pad_in_w),
+        .pad_out(gpio_out),
+        .pad_oe (gpio_oe),
 
         .flash_sck(flash_sck), 
         .flash_cs_n(flash_cs_n), 
@@ -203,7 +197,7 @@ module tb_top_soc();
         uart_done = 1'b0;
     end
 
-    always @(posedge clk_400m) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             core_cycle_count <= 0;
             pc_stall_count <= 0;
@@ -321,7 +315,7 @@ module tb_top_soc();
         end
     end
 
-    always @(posedge clk_100m) begin
+    always @(posedge clk) begin
         if (!rst_n) begin
             apb_busy_count <= 0;
             last_apb_psel <= 1'b0;
