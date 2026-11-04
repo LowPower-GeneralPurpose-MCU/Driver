@@ -10,7 +10,7 @@ XILINX_ROOT   ?= E:/Xillinx/2025.1
 CROSS_COMPILE ?= $(XILINX_ROOT)/gnu/riscv/nt/riscv64-unknown-elf/bin/riscv64-unknown-elf-
 PYTHON        ?= python
 
-GOLDEN_RTL    ?= ../../../Script_Backend/Asap7/run_workspace/mcu/genus/rtl
+GOLDEN_RTL    ?= ../src/rtl
 GEN_BOOT_ROM  := $(GOLDEN_RTL)/tests/gen_boot_rom.py
 
 SYS_CLK_HZ    ?= 50000000

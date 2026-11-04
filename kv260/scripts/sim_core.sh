@@ -20,7 +20,7 @@ fi
 
 KV="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 XILINX_ROOT="${XILINX_ROOT:-/e/Xillinx/2025.1}"
-GOLDEN="${GOLDEN_RTL:-$KV/../../Script_Backend/Asap7/run_workspace/mcu/genus/rtl}"
+GOLDEN="${GOLDEN_RTL:-$KV/src/rtl}"
 GOLDEN="$(cd "$GOLDEN" && pwd)"
 FILELIST_TCL="$GOLDEN/../tcl/rtl_filelist.tcl"
 ROM_INC="$KV/fw/build/rom_inc"

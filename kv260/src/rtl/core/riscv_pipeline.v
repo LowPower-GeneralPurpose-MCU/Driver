@@ -1,0 +1,1693 @@
+`timescale 1ns / 1ps
+
+// Scalar RV32IMAC pipeline.
+//
+// The old top-level was a two-lane superscalar shell with ROB/Tomasulo hooks.
+// This replacement keeps the public ports compatible with the existing project,
+// but only issues lane 0. Lane 1 fetch/cache ports are tied off.
+module riscv_pipeline #(
+    parameter ENABLE_TOMASULO_INTEGER = 0,
+    // -------------------------------------------------------------------------
+    // F6 - 0: `ecall` trap vao mtvec roi CHAY TIEP (dung chuan, mac dinh).
+    //      1: giu hanh vi cu "dung han khi gap ecall" cho testbench nghiem thu cu.
+    //
+    // Voi gia tri cu (khong co tham so, luon dung han) thi `riscv_done` len 1 o
+    // lan `ecall` DAU TIEN, va vi moi thanh ghi pipeline lan pc_reg deu co dieu
+    // kien `riscv_start && !riscv_done`, ca loi DONG BANG VINH VIEN. Do la di
+    // san cua testbench lot vao RTL production: mot syscall lam chet chip.
+    // -------------------------------------------------------------------------
+    parameter HALT_ON_ECALL = 0,
+    // -------------------------------------------------------------------------
+    // RV32F (2026-09-18). MOT cong tac duy nhat cho toan bo duong dau phay dong:
+    // no di thang xuong ENABLE_F_EXTENSION cua decoder, ENABLE_FPU cua tang EX
+    // va ENABLE_F_EXTENSION cua tep CSR (bit F trong misa). Truoc day ba cho do
+    // phai sua BANG TAY va de lech nhau - dung loi ma ghi chu F1 trong
+    // register_file.v mo ta.
+    //
+    // MAC DINH 0. Ly do khong phai ky thuat ma la LUONG THIET KE: ban chay
+    // Innovus sach ngay 2026-09-18 (DRC 0, setup +349 ps, hold +21 ps) duoc dung
+    // tren netlist KHONG co FPU. Bat len 1 lam netlist phinh dang ke nen phai
+    // chay lai ca Genus lan 11 khoi Innovus. Mo phong bat rieng bang defparam
+    // (xem tests/tb_fpu_core.sv).
+    // -------------------------------------------------------------------------
+    parameter ENABLE_F = 0
+)(
+    input  wire        clk,
+    input  wire        reset_n,
+    input  wire        riscv_start,
+    input  wire        meip_i,
+    input  wire        msip_i,
+    input  wire        mtip_i,
+    // --- CLIC (interrupt/clic/clic.v) - ngat ngoai o che do mtvec.mode = 11 ---
+    // Bon tin hieu duoi da duoc CLIC chot thanh ghi: ngat uu tien cao nhat dang
+    // cho va da enable. Core tu quyet dinh nhan hay khong (so muc voi mil /
+    // mintthresh va mstatus.MIE) va bao lai bang clic_ack_o khi THAT SU nhan,
+    // de CLIC xoa pending cua ngat kich canh. Khong con lenh claim qua bus.
+    input  wire        clic_irq_valid_i,
+    input  wire [4:0]  clic_irq_id_i,
+    input  wire [7:0]  clic_irq_level_i,
+    input  wire        clic_irq_shv_i,
+    output wire        clic_ack_o,
+    output wire [4:0]  clic_ack_id_o,
+    input  wire [31:0] reset_vector_in,
+    output reg         riscv_done,
+
+    // ICache interface
+    output wire        icache_read_req,
+    output wire [31:0] icache_addr,
+    input  wire [31:0] icache_read_data,
+    input  wire        icache_hit,
+    input  wire        icache_stall,
+    input  wire        icache_error,   // B3 - loi bus khi lay lenh -> mcause 1
+    output wire        icache_read_req_lane1,
+    output wire [31:0] icache_addr_lane1,
+    input  wire [31:0] icache_read_data_lane1,
+    input  wire        icache_hit_lane1,
+    input  wire        icache_stall_lane1,
+
+    // DCache interface
+    output wire        dcache_read_req,
+    output wire        dcache_write_req,
+    // P2c - `fence`.  Khong mang dia chi, khong mang du lieu: no chi bao
+    // D-cache giu core lai cho toi khi store buffer xa het (`sb_drained`).
+    // Xem MEMORY_FIX_PLAN.md Phase 1 / P2 va nhanh 7'b0001111 trong
+    // block_unit/control_unit.v.
+    output wire        dcache_fence,
+    output wire [31:0] dcache_addr,
+    output wire [31:0] dcache_write_data,
+    input  wire [31:0] dcache_read_data,
+    // R1b - bat tay hai chu ky cho AMO. Xem ghi chu trong pipeline_stage.v.
+    output wire        dcache_amo_req,
+    input  wire        dcache_amo_capture,
+    input  wire        dcache_hit,
+    input  wire        dcache_stall,
+    input  wire        dcache_error,   // B2 - loi bus khi truy cap du lieu -> mcause 5/7
+    // PMP du lieu vi pham (to hop): chan dcache/tcm bat dau truy cap. Xem trap_data_access.
+    output wire        dcache_block,
+
+    output wire [1:0]  mem_size_top,
+    output wire        mem_unsigned_top,
+
+    output wire        wfi_sleep_out,
+
+    // Debug Module Interface
+    input  wire        dbg_halt_req,
+    input  wire        dbg_resume_req,
+    output wire        dbg_halted,
+
+    input  wire [15:0] dbg_reg_read_addr,
+    output wire [31:0] dbg_reg_read_data,
+    input  wire        dbg_reg_write_en,
+    input  wire [15:0] dbg_reg_write_addr,
+    input  wire [31:0] dbg_reg_write_data
+);
+
+    localparam ROB_TAG_W = 1;
+    localparam [31:0] NOP = 32'h00000013;
+
+    // Lane 1 is intentionally disabled in scalar mode.
+    assign icache_read_req_lane1 = 1'b0;
+    assign icache_addr_lane1     = 32'd0;
+
+    // =========================================================================
+    // IF wires and PC
+    // =========================================================================
+    wire [31:0] pc_in;
+    wire [31:0] pc_out;
+    wire [31:0] pc_plus_4;
+    wire [31:0] pc_plus_8_unused;
+    wire [31:0] instr;
+    wire [31:0] instr_lane1_unused;
+    wire        if_lane1_req_unused;
+    wire [31:0] if_lane1_addr_unused;
+
+    reg [31:0] pc_reg;
+    reg        flush_temp;
+
+    // =========================================================================
+    // IF/ID
+    // =========================================================================
+    wire [31:0] if_id_instr;
+    wire [31:0] if_id_pc_plus_4;
+    wire [31:0] if_id_pc_in;
+    wire        if_id_predict_taken;
+    wire        if_id_btb_hit;
+
+    // =========================================================================
+    // ID
+    // =========================================================================
+    wire [31:0] read_data1;
+    wire [31:0] read_data2;
+    wire [31:0] read_data1_temp;
+    wire [31:0] read_data2_temp;
+    wire [31:0] ext_imm;
+    wire [4:0]  rs1;
+    wire [4:0]  rs2;
+    wire [4:0]  rd;
+    wire [2:0]  funct3;
+    wire [6:0]  opcode;
+    wire [6:0]  funct7;
+    wire [31:0] jal_target;
+    wire [31:0] branch_target;
+    wire        reg_write;
+    wire        alu_src;
+    wire        mem_write;
+    wire        mem_read;
+    wire        mem_to_reg;
+    wire        branch;
+    wire        jal;
+    wire        jalr;
+    wire        lui;
+    wire        auipc;
+    wire        mem_unsigned;
+    wire [1:0]  alu_op;
+    wire [1:0]  mem_size;
+    wire [3:0]  alu_ctrl;
+    wire        ecall;
+    wire        ebreak;
+    wire        mret;
+    wire        fence_op;          // P2c
+    wire [11:0] csr_addr;
+    wire [1:0]  csr_op;
+    wire        csr_we;
+    wire        md_type;
+    wire [2:0]  md_operation;
+    wire        wfi_req_internal;
+    wire        fpu_en;
+    wire        f_reg_write;
+    wire        f_mem_to_reg;
+    wire        f_mem_write;
+    wire        f_to_x;
+    wire        x_to_f;
+    wire [4:0]  fpu_operation;
+    // ---- RV32F: duong f o tang ID -----------------------------------------
+    wire [4:0]  fs3;                  // instr[31:27], toan hang thu ba cua FMA
+    wire        uses_fs1, uses_fs2, uses_fs3;
+    wire [31:0] read_f_data1, read_f_data2, read_f_data3;
+    wire [2:0]  frm_val;              // fcsr.frm
+    wire        fs_off_val;           // mstatus.FS == Off
+
+    // =========================================================================
+    // ID/EX
+    // =========================================================================
+    wire [31:0] id_ex_pc_plus_4;
+    wire [31:0] id_ex_pc_in;
+    wire [31:0] id_ex_instr;
+    wire [31:0] id_ex_read_data1;
+    wire [31:0] id_ex_read_data2;
+    wire [31:0] id_ex_ext_imm;
+    wire [4:0]  id_ex_rs1;
+    wire [4:0]  id_ex_rs2;
+    wire [4:0]  id_ex_rd;
+    wire [2:0]  id_ex_funct3;
+    wire        id_ex_reg_write;
+    wire        id_ex_alu_src;
+    wire        id_ex_mem_write;
+    wire        id_ex_mem_read;
+    wire        id_ex_mem_to_reg;
+    wire        id_ex_branch;
+    wire        id_ex_jal;
+    wire        id_ex_jalr;
+    wire        id_ex_lui;
+    wire        id_ex_auipc;
+    wire        id_ex_mem_unsigned;
+    wire [1:0]  id_ex_mem_size;
+    wire [3:0]  id_ex_alu_ctrl;
+    wire [31:0] id_ex_branch_target;
+    wire [31:0] id_ex_jal_target;
+    wire        id_ex_predict_taken;
+    wire        id_ex_btb_hit;
+    wire        id_ex_ecall;
+    wire        id_ex_ebreak;
+    wire        id_ex_mret;
+    wire        id_ex_fence_op;    // P2c
+    wire [11:0] id_ex_csr_addr;
+    wire [1:0]  id_ex_csr_op;
+    wire        id_ex_csr_we;
+    wire        id_ex_md_type;
+    wire [2:0]  id_ex_md_operation;
+    wire        id_ex_fpu_en;
+    wire        id_ex_f_reg_write;
+    wire        id_ex_f_mem_to_reg;
+    wire        id_ex_f_mem_write;
+    wire        id_ex_f_to_x;
+    wire        id_ex_x_to_f;
+    wire [4:0]  id_ex_fpu_operation;
+    wire [31:0] id_ex_read_f_data1;
+    wire [31:0] id_ex_read_f_data2;
+    wire [31:0] id_ex_read_f_data3;
+    wire [4:0]  id_ex_fs3;
+    wire [ROB_TAG_W-1:0] id_ex_rob_tag;
+    wire        id_ex_rob_valid;
+
+    // =========================================================================
+    // EX
+    // =========================================================================
+    wire [31:0] alu_in1;
+    wire [31:0] alu_in2;
+    wire [31:0] mem_write_data;
+    wire [31:0] csr_write_data_ex;
+    wire [31:0] fpu_in1;
+    wire [31:0] fpu_in2;
+    wire [31:0] fpu_in3;
+    wire [4:0]  fpu_fflags;
+    wire [31:0] alu_result;
+    wire        branch_taken;
+    wire        mf_alu_stall;
+    wire [31:0] fpu_result_out;
+
+    // =========================================================================
+    // EX/MEM
+    // =========================================================================
+    wire [31:0] ex_mem_instr;
+    wire [31:0] ex_mem_alu_result;
+    wire [31:0] ex_mem_mem_write_data;
+    wire [31:0] ex_mem_branch_target;
+    wire [31:0] ex_mem_pc_plus_4;
+    wire [31:0] ex_mem_pc_in;
+    wire [4:0]  ex_mem_rd;
+    wire        ex_mem_mem_write;
+    wire        ex_mem_mem_read;
+    wire        ex_mem_mem_to_reg;
+    wire        ex_mem_branch;
+    wire        ex_mem_branch_taken;
+    wire        ex_mem_jal;
+    wire        ex_mem_mem_unsigned;
+    wire        ex_mem_reg_write;
+    wire [1:0]  ex_mem_mem_size;
+    wire        ex_mem_predict_taken;
+    wire        ex_mem_btb_hit;
+    wire        ex_mem_ecall;
+    wire        ex_mem_ebreak;
+    wire        ex_mem_mret;
+    wire        ex_mem_fence_op;   // P2c
+    wire [11:0] ex_mem_csr_addr;
+    wire [1:0]  ex_mem_csr_op;
+    wire        ex_mem_csr_we;
+    wire [31:0] ex_mem_csr_write_data;
+    wire [31:0] ex_mem_fpu_result;
+    wire [31:0] ex_mem_f_store_data;
+    wire        ex_mem_f_reg_write;
+    wire        ex_mem_f_mem_to_reg;
+    wire        ex_mem_f_mem_write;
+    wire [4:0]  ex_mem_fflags;
+    wire        ex_mem_fp_active;
+    wire [ROB_TAG_W-1:0] ex_mem_rob_tag;
+    wire        ex_mem_rob_valid;
+    wire [31:0] final_mem_write_data;
+    wire [31:0] mem_read_data;
+
+    // =========================================================================
+    // MEM/WB
+    // =========================================================================
+    wire [31:0] mem_wb_mem_read_data;
+    wire [31:0] mem_wb_alu_result;
+    wire [31:0] mem_wb_pc_plus_4;
+    wire        mem_wb_mem_to_reg;
+    wire        mem_wb_reg_write;
+    wire        mem_wb_jal;
+    wire [4:0]  mem_wb_rd;
+    wire        mem_wb_ecall;
+    wire [31:0] mem_wb_fpu_result;
+    wire        mem_wb_f_reg_write;
+    wire        mem_wb_f_mem_to_reg;
+    wire [ROB_TAG_W-1:0] mem_wb_rob_tag;
+    wire        mem_wb_rob_valid;
+    wire [31:0] wb_write_data;
+    wire [31:0] wb_f_write_data;
+
+    // =========================================================================
+    // CSR/debug/branch/stall
+    // =========================================================================
+    wire [31:0] mie_val;
+    wire        mstatus_mie_val;
+    wire        clic_mode;
+    wire [7:0]  clic_mil;
+    wire [7:0]  clic_mintthresh;
+    wire [31:0] mtvec_pc;
+    wire [31:0] mepc_pc;
+    wire [31:0] csr_read_data_raw;
+    wire [31:0] csr_read_data_rf;
+    wire [31:0] csr_read_data_fwd;
+    wire [31:0] csr_dbg_read_data;
+    wire [31:0] csr_dbg_read_data_rf;
+    wire [31:0] rf_dbg_read_data;
+    wire [31:0] frf_dbg_read_data;
+    wire [31:0] dpc_out;
+    wire [31:0] dcsr_out;
+
+    wire        predict_taken;
+    wire        bpu_correct;
+    wire        btb_hit;
+    wire        actual_taken;
+    wire [31:0] predict_target;
+
+    wire        load_use_stall;
+    wire        flush_branch;
+    wire        flush_jal;
+    // R2 - JALR phan giai o EX/MEM, nen no co tin hieu flush rieng hanh xu y het
+    // `flush_branch`. Xem ghi chu R2 trong pipeline_stage.v.
+    wire        flush_jalr;
+    wire        ex_mem_jalr;
+    wire [31:0] ex_mem_jalr_target;
+    wire [31:0] jalr_target;
+    wire        flush_trap;
+    wire        stall_IF;
+    wire        stall_ID;
+    wire        stall_EX;
+    wire        stall_MEM;
+    wire        stall_WB;
+    wire        is_sleeping_internal;
+
+    // ---- day "lenh that, khong phai bong bong" chay suot ba tang ----
+    wire        if_id_valid;
+    wire        id_ex_valid;
+    wire        ex_mem_valid;
+
+    // ---- illegal-instruction: ID -> EX -> MEM ----
+    // ---- B3: instruction access fault chay IF -> ID -> EX -> MEM ----
+    wire        instr_fault;
+    wire        if_id_fault;
+    wire        id_ex_fault;
+    wire        ex_mem_fault;      // MEM: nguon cua trap_instr_access
+
+    wire        illegal_instr;     // ID:  ma lenh khong ton tai
+    wire        id_ex_illegal;     // EX
+    wire        ex_mem_illegal;    // MEM: nguon cua trap_illegal
+    wire        csr_illegal_write; // MEM: ghi vao CSR chi doc
+    wire        csr_illegal_addr;  // MEM: truy cap CSR khong hien thuc (C5/C6)
+
+    // ---- F3: dang lay nua thu nhat cua lenh 32 bit vat bien ----
+    wire        if_realign_stall;
+
+    // =========================================================================
+    // Trap and interrupt logic
+    // =========================================================================
+    // -------------------------------------------------------------------------
+    // CLIC (2026-09-11). Ngat CLIC duoc NHAN khi muc cua no vuot ca muc dang
+    // phuc vu (mil) lan nguong phan mem (mintthresh) - Smclic. Hai so sanh 8
+    // bit tren ba gia tri tu flop (CLIC chot dau ra, mil/mintthresh la CSR).
+    // -------------------------------------------------------------------------
+    wire [7:0] clic_th   = (clic_mil > clic_mintthresh) ? clic_mil : clic_mintthresh;
+    wire       clic_take = clic_mode & clic_irq_valid_i & (clic_irq_level_i > clic_th);
+
+    // WFI thuc day khi co ngat DU DIEU KIEN (bat ke mstatus.MIE) - dac ta.
+    wire wake_interrupt = clic_mode ? clic_take :
+                          ((meip_i & mie_val[11]) |
+                           (msip_i & mie_val[3])  |
+                           (mtip_i & mie_val[7]));
+
+    // PMP (core/block_unit/pmp_unit.v): loi load/store o tang MEM va loi lay
+    // lenh o tang ID. Khai bao o day vi trap logic ben duoi dung chung.
+    wire pmp_d_fault;
+    wire pmp_i_fault;
+
+    // -------------------------------------------------------------------------
+    // KHOAN NO C - ngat duoc quy cho lenh dang o EX/MEM, KHONG cho lenh o tang IF.
+    //
+    // Truoc day: mepc = pc_in (PC tang IF) trong khi flush_trap xoa CA BON thanh
+    // ghi pipeline. Bon lenh dang bay trong ID, EX, MEM, WB bi huy, nhung mepc
+    // tro toi mot lenh TRE HON tat ca chung - mret quay ve SAU chung. Mot ngat
+    // ngoai lang le nuot toi bon lenh, khong dau vet. Voi RTOS / ISR dinh ky thi
+    // chuong trinh mat lenh lien tuc.
+    //
+    // Bay gio ngat duoc doi xu nhu mot ngoai le quy cho lenh o EX/MEM, tai dung
+    // nguyen duong da chay dung cho ecall/ebreak: mepc = ex_mem_pc_in, lenh do bi
+    // huy va CHAY LAI sau mret; moi lenh tre hon van con trong pipeline nen cung
+    // chay lai.
+    //
+    // Dieu kien ex_mem_valid la BAT BUOC: flush khong xoa ex_mem_pc_in, nen nhan
+    // ngat khi EX/MEM la bong bong se cho mepc tro vao lenh DA RETIRE -> chay hai
+    // lan. Hoan ngat lai vai chu ky la vo hai (meip/msip/mtip la MUC, khong phai
+    // xung), va khong be tac: bong bong chi sinh ra tu flush, ma sau moi flush
+    // luon co lenh that di qua. WFI co duong danh thuc RIENG (wake_interrupt,
+    // khong qua mstatus.MIE).
+    // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // 2026-09-11 - NGAT KHONG DUOC NHAN KHI TANG MEM DANG GIU MOT LOAD/STORE.
+    //
+    // Ngat duoc quy cho lenh o EX/MEM va lenh do bi HUY roi chay lai sau mret.
+    // Voi lenh ALU thi vo hai. Voi load/store thi khong: neu truy cap da ra bus
+    // (D-cache dang AR_REQ/R_WAIT cua mot lenh doc MMIO) thi commit_kill chi rut
+    // yeu cau phia core, giao dich AXI van chay xong - thanh ghi UART RX / FIFO
+    // da bi pop, roi lenh doc CHAY LAI sau mret va pop them lan nua. Mat du lieu.
+    //
+    // Nen ngat chi nhan tren lenh KHONG phai truy cap bo nho. Mot chuoi load/
+    // store lien tiep chi hoan ngat vai chu ky: moi vong lap co it nhat mot lenh
+    // nhanh/ALU di qua MEM. Dieu kien dung toan flop ex_mem_* nen KHONG tao vong
+    // to hop voi dcache_stall (xem ghi chu vong lap P2c o top_soc.v).
+    //
+    // Phan con lai cua loi (CSR bi ghi trong luc dong bang) nam o trap_commit,
+    // xem ben duoi va o csr_register_file.
+    // -------------------------------------------------------------------------
+    wire irq_ok          = ex_mem_valid & mstatus_mie_val &
+                           ~(ex_mem_mem_read | ex_mem_mem_write);
+    // Che do CLINT: msip/mtip qua mie. meip_i khong con nguon (PLIC da bo,
+    // top_soc noi 0) - giu cong de core dung duoc voi PLIC ngoai neu can.
+    wire is_external_irq = ~clic_mode & meip_i & mie_val[11] & irq_ok;
+    wire is_software_irq = ~clic_mode & msip_i & mie_val[3]  & irq_ok;
+    wire is_timer_irq    = ~clic_mode & mtip_i & mie_val[7]  & irq_ok;
+    wire is_clic_irq     = clic_take & irq_ok;
+    wire trap_interrupt  = is_clic_irq | is_external_irq | is_software_irq | is_timer_irq;
+
+    // -------------------------------------------------------------------------
+    // V5 - illegal-instruction (mcause = 2).
+    //
+    // Hai nguon, ca hai deu la thuoc tinh cua lenh dang o EX/MEM nen chung KHONG
+    // the xung dot ve mepc/mtval:
+    //   ex_mem_illegal    : ma lenh khong ton tai (decoder dat, di theo pipeline)
+    //   csr_illegal_write : csrrw/csrrs/csrrc ghi vao CSR chi doc (csr[11:10]=11)
+    //
+    // Truoc ban sua nay KHONG co illegal-instruction nao: nhanh `default` rong
+    // cua main_control_unit khien moi opcode la chay im lang nhu NOP - khong the
+    // debug firmware, va mot ma lenh hong se troi qua ma khong ai biet.
+    // -------------------------------------------------------------------------
+    // C5/C6 bo sung nguon thu ba: truy cap CSR khong hien thuc (ke ca nhom debug
+    // 0x7B0-0x7B2 khi khong o Debug Mode). Cung tang EX/MEM nen khong xung dot
+    // mepc/mtval voi hai nguon kia.
+    wire ex_mem_is_mem   = ex_mem_mem_read | ex_mem_mem_write;
+
+    wire trap_illegal    = csr_illegal_write | csr_illegal_addr | ex_mem_illegal;
+
+    // -------------------------------------------------------------------------
+    // C1 - ACCESS FAULT (mcause 1 / 5 / 7).
+    //
+    // Hai nguon, sinh o hai tang khac nhau nhung deu NHAN o tang MEM:
+    //   ex_mem_fault : loi khi LAY LENH nay. I-cache bao luc fetch, bit di theo
+    //                  pipeline (B3) nen toi MEM van gan dung lenh do.
+    //   dcache_error : loi khi TRUY CAP DU LIEU. Xung mot chu ky, dung chu ky
+    //                  dcache_stall ha, nen lenh van con o MEM.
+    //
+    // dcache_error da duoc D-cache rang buoc bang `cpu_addr == req_addr` nen no
+    // khong the len cho mot lenh da bi flush. Van AND them ex_mem_valid de bong
+    // bong khong sinh trap - cung ly do voi irq_ok (khoan no C).
+    // -------------------------------------------------------------------------
+    // PMP: ex_mem_fault con mang loi lay lenh do PMP-X (gop o cong ID/EX), va
+    // loi PMP du lieu gop vao loi du lieu - cung mcause 1/5/7 voi loi bus.
+    //
+    // 2026-09-14 - LOI PMP DU LIEU DI QUA MOT THANH GHI.
+    // Truoc: pmp_d_fault (~1.8 ns so sanh) -> trap_enter -> commit_kill -> rut
+    // request D-cache -> dcache_stall -> enable IF_ID.  Genus 2026-09-14: 13/100
+    // path toi han (EX_MEM_alu_result -> IF_ID_instr, 3.66 ns).
+    //
+    // Moi truy cap load/store deu nam it nhat MOT chu ky o IDLE (dcache) /
+    // S_IDLE (tcm) voi stall = 1 va chua tac dung phu nao ngoai chuyen trang
+    // thai.  Nen:
+    //   chu ky 1: dcache_block (to hop) chi chan chuyen trang thai / cap macro;
+    //             stall khong phu thuoc no, commit_kill cung khong.
+    //   chu ky 2: pmp_d_fault_q (flop) hop le vi ex_mem giu nguyen suot chu ky
+    //             stall (stall_ex_mem = dcache_stall, flush_ex_mem co ~mem_freeze)
+    //             -> trap -> commit_kill rut request -> stall ha -> trap commit.
+    // Truy cap hop le khong ton them chu ky nao; truy cap bi cam ton them mot.
+    // Cau hinh PMP chi doi qua lenh ghi CSR o MEM, ma lenh o MEM luc do la chinh
+    // load/store nay, nen ket qua da dang ky khong the cu.
+    reg  pmp_d_fault_q, pmp_d_held_q;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            pmp_d_fault_q <= 1'b0;
+            pmp_d_held_q  <= 1'b0;
+        end else begin
+            pmp_d_fault_q <= pmp_d_fault;
+            pmp_d_held_q  <= dcache_stall;
+        end
+    end
+    wire pmp_d_fault_now = ex_mem_valid & ex_mem_is_mem & pmp_d_fault;
+    assign dcache_block  = pmp_d_fault_now;
+
+    wire trap_instr_access = ex_mem_valid & ex_mem_fault;
+    wire trap_data_access  = ex_mem_valid & ex_mem_is_mem &
+                             (dcache_error | (pmp_d_fault_q & pmp_d_held_q));
+    wire trap_st_access    = trap_data_access &  ex_mem_mem_write;
+    wire trap_ld_access    = trap_data_access & ~ex_mem_mem_write;
+
+    // -------------------------------------------------------------------------
+    // C2 - LOAD / STORE ADDRESS MISALIGNED (mcause 4 / 6).
+    //
+    // Truoc ban sua nay KHONG co kiem tra can le nao: `lw a0, 1(s0)` di thang
+    // vao cache, cache lay word chua dia chi do va tra ve gia tri SAI. Khong
+    // exception nao de RTOS bat, khong dau vet nao de debug.
+    //
+    // mem_size: 00 = byte, 01 = halfword, 10 = word (xem control_unit.v).
+    // Byte thi khong bao gio lech duoc nen khong co nhanh cho no.
+    //
+    // Dieu kien (ex_mem_mem_read | ex_mem_mem_write) la BAT BUOC du mem_size
+    // mac dinh 2'b00: no lam y dinh ro rang va khong phu thuoc vao gia tri mac
+    // dinh cua mot tin hieu o module khac.
+    //
+    // ex_mem_valid loai bong bong - cung ly do voi irq_ok (khoan no C).
+    // -------------------------------------------------------------------------
+    wire mem_ms_word     = (ex_mem_mem_size == 2'b10) && (ex_mem_alu_result[1:0] != 2'b00);
+    wire mem_ms_half     = (ex_mem_mem_size == 2'b01) &&  ex_mem_alu_result[0];
+    wire mem_misaligned  = ex_mem_valid & ex_mem_is_mem & (mem_ms_word | mem_ms_half);
+
+    // Store thang khi mot lenh vua doc vua ghi (AMO). A dang tat nen truong hop
+    // do khong xay ra, nhung viet ro de khong phu thuoc vao dieu do.
+    wire trap_st_misaligned = mem_misaligned &  ex_mem_mem_write;
+    wire trap_ld_misaligned = mem_misaligned & ~ex_mem_mem_write;
+    wire trap_misaligned    = trap_ld_misaligned | trap_st_misaligned;
+
+    wire trap_enter      = ex_mem_ecall | ex_mem_ebreak | trap_interrupt |
+                           trap_illegal | trap_misaligned |
+                           trap_instr_access | trap_data_access;
+    wire mret_exec       = ex_mem_mret;
+
+    // Thu tu uu tien theo bang "Synchronous exception priority" cua dac ta:
+    // ngat truoc moi ngoai le; roi illegal / ebreak / ecall (ba cai loai tru
+    // nhau nen thu tu giua chung khong quan trong); roi MISALIGNED.
+    // CLIC: exccode = ID cua ngat (Smclic), bit 31 = 1.
+    wire [31:0] trap_cause = is_clic_irq ? {1'b1, 26'd0, clic_irq_id_i} :
+                             (trap_interrupt && is_external_irq) ? 32'h8000000b :
+                             (trap_interrupt && is_software_irq) ? 32'h80000003 :
+                             (trap_interrupt && is_timer_irq)    ? 32'h80000007 :
+                             ex_mem_ecall                        ? 32'd11       :
+                             ex_mem_ebreak                       ? 32'd3        :
+                             trap_instr_access                   ? 32'd1        :
+                             trap_illegal                        ? 32'd2        :
+                             trap_st_misaligned                  ? 32'd6        :
+                             trap_ld_misaligned                  ? 32'd4        :
+                             trap_st_access                      ? 32'd7        :
+                             trap_ld_access                      ? 32'd5        : 32'd0;
+
+    // Mot nguon duy nhat cho ca ngoai le lan ngat - xem ghi chu khoan no C.
+    wire [31:0] trap_pc_value = ex_mem_pc_in;
+
+    // -------------------------------------------------------------------------
+    // C3 - dia chi vector cua trap.
+    //
+    // mtvec[1:0] la truong MODE (WARL, ep o register_file.v):
+    //   0 = DIRECT   : moi trap vao BASE
+    //   1 = VECTORED : INTERRUPT vao BASE + 4*cause, EXCEPTION van vao BASE
+    //
+    // Tinh o day thay vi trong instruction_fetch vi day la noi da co trap_cause;
+    // IF chi can nhan mot dia chi da san sang va khong phai doi.
+    //
+    // Bo cong nay nam trong cone cua nhanh `trap_enter` o mux PC - mot cone
+    // RIENG, ngan, lay tu thanh ghi ex_mem_*. No khong dung vao duong toi han
+    // seq_pc (xem P1 trong CORE_FIX_PLAN.md).
+    //
+    // cause[4:0] la du: 5 bit phu het 0-31, va mtvec_base da can le 4 byte nen
+    // phep cong chi cham toi bit [6:2] - mot bo dem 5 bit, khong phai adder 32 bit.
+    // -------------------------------------------------------------------------
+    // CLIC (mode 11, base can le 64 byte - WARL o register_file.v):
+    //   ngat shv = 1 -> BASE + 4*id   (moi o la mot lenh `j handler_id`)
+    //   ngat shv = 0 va moi ngoai le -> BASE
+    // LECH Smclic co y: Smclic doc mot BANG DIA CHI o mtvt[id] roi nhay toi dia
+    // chi do; o day o vector la mot LENH nhu che do vectored cua CLINT. Tu lay
+    // mot word du lieu trong luc vao trap can them mot duong doc bo nho vao
+    // tang IF - rui ro lon cho pipeline nay - trong khi do tre chi hon mot lenh
+    // `j`. mtvt (0x307) vi vay KHONG ton tai (truy cap -> illegal).
+    wire [31:0] mtvec_base   = {mtvec_pc[31:2], 2'b00};
+    wire        mtvec_vector = clic_mode ? (is_clic_irq & clic_irq_shv_i)
+                                         : (mtvec_pc[0] & trap_cause[31]);
+    wire [31:0] trap_vector  = mtvec_vector
+                             ? (mtvec_base + {25'd0, trap_cause[4:0], 2'b00})
+                             : mtvec_base;
+
+    // mtval cua illegal-instruction mang chinh ma lenh gay loi (dac ta cho phep).
+    // Truoc day mtval luon la 0, nen handler khong co cach nao biet lenh nao sai.
+    // mtval cua misaligned mang DIA CHI gay loi (dac ta cho phep, va day la thu
+    // duy nhat handler dung duoc). Uu tien phai KHOP voi trap_cause o tren:
+    // trap_illegal thang trap_misaligned.
+    // Uu tien PHAI khop tung dong voi trap_cause o tren.
+    //   mcause 1       -> mtval = PC gay loi
+    //   mcause 2       -> mtval = ma lenh
+    //   mcause 4/5/6/7 -> mtval = dia chi gay loi
+    wire [31:0] trap_val_value = trap_instr_access ? ex_mem_pc_in      :
+                                 trap_illegal      ? ex_mem_instr      :
+                                 trap_misaligned   ? ex_mem_alu_result :
+                                 trap_data_access  ? ex_mem_alu_result : 32'd0;
+
+    // =========================================================================
+    // Stall/flush policy
+    // =========================================================================
+    // -------------------------------------------------------------------------
+    // KHOAN NO D - stall bo nho DONG BANG TOAN BO mat phang dieu khien.
+    //
+    // Trong moi thanh ghi pipeline, `flush` duoc kiem TRUOC `stall`, nen khi hai
+    // tin hieu cung len thi flush THANG. Voi bo nho tre 0 chu ky dieu do vo hai;
+    // bat do tre len thi cac cap sau deu that:
+    //
+    //   flush_id_ex (load-use)  x  stall_id_ex (dcache)
+    //       lw  a0, 0(s0)   <- o MEM, D$ miss, dcache_stall = 1 hang chuc chu ky
+    //       lw  a1, 0(s1)   <- o EX
+    //       add a2, a1, x0  <- o ID  => load_use_stall = 1 => flush_id_ex = 1
+    //       Lenh o EX khong the di tiep vi EX/MEM dong bang, va ID/EX bi XOA.
+    //       `lw a1` BIEN MAT khoi chuong trinh.
+    //
+    //   flush_ex_mem (mf_alu_stall)  x  stall_ex_mem (dcache)
+    //       Bo nhan bom bong bong vao EX/MEM moi chu ky no chay. Neu MEM dang giu
+    //       mot lenh CHO BO NHO thi lenh do bi xoa truoc khi lay duoc du lieu.
+    //
+    // Quy tac dung: mot stall TOAN CUC (bo nho) phai THANG MOI hanh dong cuc bo
+    // (bong bong load-use, bong bong bo nhan, doi huong nhanh, trap). Pipeline
+    // khong nhuc nhich thi khong co gi de bom bong bong vao, cung khong co gi de
+    // xoa.
+    //
+    // An toan vi moi nguon flush deu la MUC lay tu trang thai dang dong bang, nen
+    // chung GIU NGUYEN suot thoi gian dong bang va co hieu luc ngay khi no het:
+    //     flush_branch / flush_trap  <- ex_mem_*        (dong bang)
+    //     flush_jal / load_use_stall <- id_ex_*, if_id_* (dong bang)
+    // Ngoai le duy nhat la trap_interrupt lay tu chan ben ngoai - nhung ngat la
+    // MUC chu khong phai xung nen hoan lai vai chu ky la vo hai.
+    //
+    // Khong be tac: dcache_stall luon ha xuong sau do tre bo nho. Va neu lenh o
+    // MEM la mot `sw` bi commit_kill chan thi yeu cau ghi rut xuong, giao dich
+    // ket thuc, stall ha - trap dien ra ngay sau do.
+    // -------------------------------------------------------------------------
+    wire mem_freeze = dcache_stall;
+
+    // -------------------------------------------------------------------------
+    // TRAP COMMIT (2026-09-11). PC chi doi huong khi !dcache_stall (khoi pc_reg
+    // ben duoi), nen moi tac dung phu cua trap - ghi CSR, ack cho CLIC - cung
+    // chi duoc xay ra trong DUNG chu ky do. Xem ghi chu day du o cong
+    // trap_commit cua csr_register_file. trap_enter tho van la commit_kill:
+    // chan truy cap bo nho cua lenh o MEM ngay khi trap xuat hien.
+    //
+    // Chu ky commit tinh trap_cause / trap_vector / clic_ack tu CUNG mot bo gia
+    // tri, nen neu CLIC doi ngat uu tien nhat trong luc cho thi ca ba van khop.
+    // -------------------------------------------------------------------------
+    wire trap_commit = trap_enter & ~mem_freeze;
+    wire mret_commit = mret_exec  & ~mem_freeze;
+
+    assign clic_ack_o    = trap_commit & is_clic_irq;
+    assign clic_ack_id_o = clic_irq_id_i;
+
+    // -------------------------------------------------------------------------
+    // C8 - RESET_VECTOR cua SYSCON truoc day KHONG he toi core: pc_reg reset
+    // bat dong bo ve hang 0x0001_0000 (xem khoi pc_reg ben duoi), con
+    // reset_vector_in chi vao pc_out luc DANG reset, ma luc do pc_reg khong nap.
+    // Firmware ghi vector roi reset van boot tu ROM.
+    //
+    // Giu reset ve HANG (reset bat dong bo ve mot bien la sai: mo phong va cong
+    // se khac nhau khi bien doi sat luc tha reset). Them MOT chu ky sau reset:
+    // boot_load_q = 1 -> pc_reg nap reset_vector_in, va chu ky do KHONG lay
+    // lenh. reset_vector_in la flop mien POR cua apb_syscon, on dinh tu truoc.
+    // -------------------------------------------------------------------------
+    reg boot_load_q;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) boot_load_q <= 1'b1;
+        else          boot_load_q <= 1'b0;
+    end
+
+    // F4 - cong lenh chi mo khi that su dang lay lenh.
+    wire fetch_enable = ~(stall_IF | is_sleeping_internal | dbg_halted | boot_load_q);
+
+    wire stall_if_id  = dcache_stall | mf_alu_stall | load_use_stall | stall_ID;
+
+    // KHOAN NO R - mot lan lay lenh chi SINH RA lenh that khi cong MO va bo nho
+    // SAN SANG. Tang IF da co dung khai niem do (fetch_valid); o day gop lai
+    // thanh DUNG mot tin hieu, khop tung chu voi no. Truoc day chi nua sau
+    // (icache_stall) duoc bom bong bong; nua truoc (~fetch_enable) thi khong -
+    // nen moi lan halt / ngu, IF/ID van CHOT mot NOP gia voi if_id_valid = 1 va
+    // no duoc dem nhu mot lenh that.
+    wire if_fetch_bubble = ~fetch_enable | icache_stall;
+
+    // -------------------------------------------------------------------------
+    // R2 / R13 - `flush_jalr` phai co o CA BA tang, giong het `flush_branch`.
+    //
+    // Flush la DONG BO. O canh clock ma `ex_mem_jalr` = 1, JALR tu no di tiep
+    // sang MEM/WB (stall_mem_wb = 0) va ghi `rd` o do; thu `flush_ex_mem` chan
+    // lai la lenh DANG O ID/EX di vao EX/MEM - lenh K ngay sau JALR trong bo
+    // nho (JALR+4, hoac +2 neu nen). BTB khong bao gio du doan JALR, nen K luon
+    // la duong sai. Ban R2 cu bo term nay vi tuong "EX/MEM giu chinh JALR" - sai.
+    //
+    // K KHONG phai luc nao cung la bong bong. I-cache tra 1 lenh / 2 chu ky nen
+    // binh thuong co bong bong xen giua JALR va K, nhung moi lan pipeline dong
+    // bang trong luc JALR con o IF/ID thi I-cache van chay tiep va bong bong do
+    // bi NUOT. Truong hop tat dinh, gap o moi ham getter/setter:
+    //
+    //     lw   a0, 4(a5)      <- D-cache hit: dcache_stall dung 1 chu ky
+    //     ret                 <- dang o IF/ID trong chu ky dong bang do
+    //     K                   <- I-cache tra K ngay chu ky nha stall
+    //
+    //   ID/EX <- ret va IF/ID <- K cung mot canh -> ret, K lien nhau -> khi
+    //   ret o EX/MEM thi K o ID/EX (id_ex_valid = 1) -> K vao EX/MEM va CHAY:
+    //   ghi rd, ghi bo nho, nhan trap/ngat voi mepc = K (mret quay ve K, tuc la
+    //   JALR coi nhu chua tung xay ra).
+    // Store cacheable (store buffer) cung dong bang 1 chu ky -> y het. Dong bang
+    // dai (miss, MMIO) thi xay ra theo chan/le cua do dai.
+    //
+    // So do bang tb firmware (`run_soc_sim.sh fw`, cung anh ROM):
+    //     baseline (JALR o ID/EX)                     t = 1 528 046 000
+    //     R2 co flush_jalr trong flush_ex_mem         t = 2 830 376 000  (+85 %)
+    //     R2 bo flush_jalr khoi flush_ex_mem          t = 1 701 796 000  (+11.4 %)
+    // KHONG duoc doc la "term nay ton 74 diem phan tram". Voi CUNG mot chuoi
+    // lenh dong, term nay chi bien K thanh bong bong o dung chu ky PC da doi
+    // huong - thoi diem doi huong khong doi, con tac dung phu cua K (truy cap
+    // D-cache, fence, trap) chi co the THEM chu ky. Nen chu ky(co term) <=
+    // chu ky(khong term). Cham hon 85 % nghia la HAI CHUOI LENH KHAC NHAU: ban
+    // 1 701 796 000 chay mot duong khac vi K da sua thanh ghi / bo nho. Con so
+    // do va "+11.4 %" suy ra tu no la phep do tren mot lan chay SAI.
+    // Xem CORE_FIX_PLAN.md §10.
+    // -------------------------------------------------------------------------
+    wire flush_if_id  = ~mem_freeze &
+                        (flush_trap | flush_branch | flush_jalr | flush_jal |
+                         (if_fetch_bubble  & !stall_if_id) |
+                         (if_realign_stall & !stall_if_id));
+    wire stall_id_ex  = dcache_stall | mf_alu_stall | stall_EX;
+    wire flush_id_ex  = ~mem_freeze &
+                        (flush_trap | flush_branch | flush_jalr | load_use_stall |
+                         (flush_jal & !stall_id_ex));
+    wire stall_ex_mem = dcache_stall | stall_MEM;
+    wire flush_ex_mem = ~mem_freeze &
+                        (flush_trap | flush_branch | flush_jalr | mf_alu_stall);
+    wire stall_mem_wb = dcache_stall | stall_WB;
+    wire flush_mem_wb = ~mem_freeze & flush_trap;
+
+`ifndef SYNTHESIS
+    // -------------------------------------------------------------------------
+    // R13 - monitor CHI DE MO PHONG (genus.tcl doc RTL voi -define SYNTHESIS).
+    //
+    // In moi lan co mot lenh THAT o ID/EX dung chu ky JALR doi huong, tuc la
+    // dung nhung lenh K ma ban R2 cu da de lot vao EX/MEM. Doi chieu PC/ma lenh
+    // in ra voi disassembly cua firmware: K nao ghi a0/a1/sp/s*, hay la load/
+    // store, la K da doi hanh vi cua lan chay 1 701 796 000.
+    //
+    // Dong [R13][FAIL] la bat bien: trong chu ky do EX/MEM PHAI nhan bong bong.
+    // -------------------------------------------------------------------------
+    integer r13_wrong_path_cnt;
+    initial r13_wrong_path_cnt = 0;
+    always @(posedge clk) begin
+        if (reset_n && riscv_start && !riscv_done &&
+            flush_jalr && !mem_freeze && id_ex_valid) begin
+            r13_wrong_path_cnt = r13_wrong_path_cnt + 1;
+            // 32 lan dau, sau do chi o luy thua cua 2 de dong cuoi mang so dem.
+            if (r13_wrong_path_cnt <= 32 ||
+                (r13_wrong_path_cnt & (r13_wrong_path_cnt - 1)) == 0)
+                $display("[R13] t=%0t #%0d JALR pc=%08h -> %08h, chan lenh duong sai pc=%08h inst=%08h",
+                         $time, r13_wrong_path_cnt, ex_mem_pc_in, ex_mem_jalr_target,
+                         id_ex_pc_in, id_ex_instr);
+            if (!flush_ex_mem)
+                $display("[R13][FAIL] t=%0t lenh duong sai pc=%08h vao EX/MEM", $time, id_ex_pc_in);
+        end
+    end
+`endif
+
+    // -------------------------------------------------------------------------
+    // KHOAN NO I - minstret phai dem LENH RETIRE, khong dem chu ky.
+    //
+    // Truoc day `instret_en = !dbg_halted`, dung y het `count_en` cua mcycle.
+    // Nghia la minstret KHONG phai bo dem lenh - no la mot BAN SAO cua mcycle:
+    // moi phep do IPC, moi profiler, moi con so CoreMark/Dhrystone doc ra so chu
+    // ky chu khong phai so lenh.
+    //
+    // Diem retire cua loi 5 tang nay la RANH GIOI EX/MEM -> MEM/WB. Ba dieu kien,
+    // moi dieu kien loai bo dung mot thu:
+    //   ex_mem_valid   loai BONG BONG (load-use, mf_alu_stall, flush nhanh).
+    //   !stall_mem_wb  loai DEM LAI - khi stall, ex_mem_valid giu 1 nhieu chu ky.
+    //                  Day cung la dieu kien lam minstret BAT BIEN voi do tre
+    //                  bo nho.
+    //   !trap_enter    loai LENH BAY. Theo dac ta, lenh gay trap KHONG retire.
+    //                  Dung trap_enter chu KHONG dung flush_trap: flush_trap con
+    //                  bao gom mret_exec, ma `mret` la lenh binh thuong - no CO
+    //                  retire.
+    // -------------------------------------------------------------------------
+    wire instret_pulse = ex_mem_valid & ~stall_mem_wb & ~trap_enter &
+                         riscv_start  & ~riscv_done;
+
+    assign pc_in = pc_reg;
+    assign mem_size_top     = ex_mem_mem_size;
+    assign mem_unsigned_top = ex_mem_mem_unsigned;
+    assign wfi_sleep_out    = is_sleeping_internal;
+
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            // The SYSCTRL reset vector itself resets to 0x0001_0000.  Keep the
+            // asynchronous reset value constant so synthesis and simulation
+            // cannot disagree when reset_vector_in changes near reset release.
+            pc_reg <= 32'h0001_0000;
+        end else if (riscv_start && !riscv_done) begin
+            if (boot_load_q) begin
+                pc_reg <= reset_vector_in;
+            end else if (dbg_halted && !dbg_resume_req) begin
+                pc_reg <= dpc_out;
+            end else if ((flush_trap || flush_branch || flush_jalr || flush_jal) && !dcache_stall) begin
+                // Doi huong PC cung phai CHO bo nho: neu khong thi PC nhay di trong
+                // khi IF/ID dang dong bang (mem_freeze chan flush), va lenh o dich
+                // bi bo qua.
+                pc_reg <= pc_out;
+            // KHOAN NO R - PC chi duoc tien khi THAT SU co mot lan lay lenh.
+            //
+            // Truoc day dieu kien la `!stall_IF`, mot BAN SAO GAN DUNG cua
+            // `fetch_enable`. Hai cai lech nhau dung mot chu ky o lan resume:
+            //     resume_pulse = dbg_halted_reg && dbg_resume_req
+            //     stall_IF     = ((dbg_halted_reg || ...) && !resume_pulse) || ...
+            //     fetch_enable = ~(stall_IF | is_sleeping | dbg_halted)
+            // Trong chu ky co resume_pulse, stall_IF da ha nhung dbg_halted VAN
+            // con 1 (no chi xoa o canh sau), nen fetch_enable van bang 0. Ket qua:
+            // pc_reg TIEN LEN trong khi khong lenh nao duoc lay - lenh o dia chi
+            // do bi NHAY QUA. Dung mot lenh moi lan halt.
+            //
+            // Dung fetch_enable truc tiep: no la nguon duy nhat quyet dinh "chu ky
+            // nay co lay lenh khong", va da duoc dung o ca ba cho khac
+            // (icache_read_req, fetch_valid cua tang IF, if_fetch_bubble).
+            end else if (fetch_enable && !load_use_stall && !if_realign_stall &&
+                         !icache_stall && !dcache_stall && !mf_alu_stall) begin
+                // F3: if_realign_stall giu PC dung yen trong nhip lay nua thu nhat,
+                // de nhip sau tang IF van con pc_in de tinh dia chi word ke tiep.
+                pc_reg <= pc_out;
+            end
+        end
+    end
+
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            flush_temp <= 1'b0;
+        end else if (riscv_start && !riscv_done && !dcache_stall) begin
+            // Cung ly do: flush_temp la ban tre mot nhip cua lan doi huong. Neu no
+            // chay trong luc pipeline dong bang thi no het han TRUOC khi lan doi
+            // huong that su xay ra.
+            flush_temp <= flush_branch || flush_jalr || flush_jal || flush_trap;
+        end
+    end
+
+    // =========================================================================
+    // IF
+    // =========================================================================
+    instruction_fetch IF (
+        .reset_n(reset_n),
+        .flush_temp(flush_temp),
+        .trap_enter(trap_enter),
+        .mret_exec(mret_exec),
+        .reset_vector_in(reset_vector_in),
+        .mtvec_in(trap_vector),   // C3 - da tinh ca che do vectored
+        .mepc_in(mepc_pc),
+        .ex_mem_branch_target(ex_mem_branch_target),
+        .id_ex_jal_target(id_ex_jal_target),
+        .pc_in(pc_in),
+        .ex_mem_pc_in(ex_mem_pc_in),
+        .ex_mem_pc_plus_4(ex_mem_pc_plus_4),
+        .ex_mem_jalr(ex_mem_jalr),
+        .ex_mem_jalr_target(ex_mem_jalr_target),
+        .id_ex_jal(id_ex_jal),
+        .btb_hit(btb_hit),
+        .predict_taken(predict_taken),
+        .actual_taken(actual_taken),
+        .bpu_correct(bpu_correct),
+        .predict_target(predict_target),
+        .fetch_two_valid(1'b0),
+
+        // F3/F4 - FSM ghep nua lenh va cong lay lenh
+        .clk(clk),
+        .icache_stall_in(icache_stall),
+        .icache_error_in(icache_error),
+        .fetch_enable(fetch_enable),
+        .if_accept(~stall_if_id),
+        .realign_stall(if_realign_stall),
+
+        .pc_out(pc_out),
+        .pc_plus_4(pc_plus_4),
+        .pc_plus_8(pc_plus_8_unused),
+        .instr(instr),
+        .instr_fault(instr_fault),
+        .instr_lane1(instr_lane1_unused),
+        .icache_read_req(icache_read_req),
+        .icache_read_req_lane1(if_lane1_req_unused),
+        .icache_addr(icache_addr),
+        .icache_addr_lane1(if_lane1_addr_unused),
+        .icache_read_data(icache_read_data),
+        .icache_read_data_lane1(icache_read_data_lane1)
+    );
+
+    if_id_register IF_ID (
+        .clk(clk),
+        .reset_n(reset_n),
+        .stall(stall_if_id),
+        .flush(flush_if_id),
+        .riscv_start(riscv_start),
+        .riscv_done(riscv_done),
+        .instr(instr),
+        .pc_plus_4(pc_plus_4),
+        .pc_in(pc_in),
+        .predict_taken(predict_taken),
+        .btb_hit(btb_hit),
+        .if_id_instr(if_id_instr),
+        .if_id_pc_plus_4(if_id_pc_plus_4),
+        .if_id_pc_in(if_id_pc_in),
+        .if_id_predict_taken(if_id_predict_taken),
+        .if_id_btb_hit(if_id_btb_hit),
+        .instr_fault(instr_fault),
+        .if_id_valid(if_id_valid),
+        .if_id_fault(if_id_fault)
+    );
+
+    // =========================================================================
+    // ID
+    // =========================================================================
+    instruction_decode #(
+        .ENABLE_F_EXTENSION(ENABLE_F)
+    ) ID (
+        .if_id_pc_in(if_id_pc_in),
+        .if_id_instr(if_id_instr),
+        .ext_imm(ext_imm),
+        .rs1(rs1),
+        .rs2(rs2),
+        .rd(rd),
+        .funct3(funct3),
+        .opcode(opcode),
+        .funct7(funct7),
+        .jal_target(jal_target),
+        .branch_target(branch_target),
+        .reg_write(reg_write),
+        .alu_src(alu_src),
+        .mem_write(mem_write),
+        .mem_read(mem_read),
+        .mem_to_reg(mem_to_reg),
+        .branch(branch),
+        .jal(jal),
+        .jalr(jalr),
+        .lui(lui),
+        .auipc(auipc),
+        .mem_unsigned(mem_unsigned),
+        .alu_op(alu_op),
+        .mem_size(mem_size),
+        .alu_ctrl(alu_ctrl),
+        .md_type(md_type),
+        .md_operation(md_operation),
+        .ecall(ecall),
+        .ebreak(ebreak),
+        .mret(mret),
+        .csr_addr(csr_addr),
+        .csr_op(csr_op),
+        .csr_we(csr_we),
+        .wfi_req(wfi_req_internal),
+        .fence_op(fence_op),
+        .illegal_instr(illegal_instr),
+        .fpu_en(fpu_en),
+        .f_reg_write(f_reg_write),
+        .f_mem_to_reg(f_mem_to_reg),
+        .f_mem_write(f_mem_write),
+        .f_to_x(f_to_x),
+        .x_to_f(x_to_f),
+        .fpu_operation(fpu_operation),
+        .fs3(fs3),
+        .uses_fs1(uses_fs1),
+        .uses_fs2(uses_fs2),
+        .uses_fs3(uses_fs3),
+        .fs_off(fs_off_val),
+        .frm_i(frm_val)
+    );
+
+    wire is_csr = (dbg_reg_read_addr[15:12] == 4'h0);
+    wire is_gpr = (dbg_reg_read_addr[15:5]  == 11'h080);
+    // Ban do thanh ghi cua Debug Module (dac ta debug, bang "abstract register"):
+    //   0x0000-0x0FFF  CSR
+    //   0x1000-0x101F  thanh ghi so nguyen x0-x31
+    //   0x1020-0x103F  thanh ghi dau phay dong f0-f31
+    // Nhanh FPR truoc day bi ep bang 0 nen OpenOCD doc `info float` ra toan 0.
+    wire is_fpr = (dbg_reg_read_addr[15:5]  == 11'h081) && (ENABLE_F != 0);
+
+    wire dbg_gpr_we = dbg_reg_write_en & (dbg_reg_write_addr[15:5]  == 11'h080);
+    wire dbg_fpr_we = dbg_reg_write_en & (dbg_reg_write_addr[15:5]  == 11'h081) &
+                      (ENABLE_F != 0);
+    wire dbg_csr_we = dbg_reg_write_en & (dbg_reg_write_addr[15:12] == 4'h0);
+
+    assign dbg_reg_read_data = is_csr ? csr_dbg_read_data :
+                               is_gpr ? rf_dbg_read_data  :
+                               is_fpr ? frf_dbg_read_data : 32'd0;
+
+    // =========================================================================
+    // RV32F - dieu kien COMMIT cua trang thai fcsr.
+    //
+    // Dung chinh bo ba dieu kien cua instret_pulse (khoan no I): mot lenh chi
+    // duoc phep sua trang thai kien truc khi no THAT SU retire.
+    //   ex_mem_valid  : khong phai bong bong
+    //   !stall_mem_wb : khong dem lai trong luc dong bang - QUAN TRONG, vi
+    //                   fflags la co TICH LUY, OR lai nhieu lan thi vo hai,
+    //                   NHUNG neu thieu dieu kien nay thi mot lenh F dang cho
+    //                   D-cache se bam co suot chuc chu ky va lam nhieu moi phep
+    //                   do. Giu de dong bo voi minstret.
+    //   !trap_enter   : lenh gay trap KHONG retire, nen khong duoc dat co.
+    // -------------------------------------------------------------------------
+    wire fp_commit    = ex_mem_valid & ~stall_mem_wb & ~trap_enter;
+    wire fflags_we_w  = fp_commit & ex_mem_fp_active;
+    wire fs_dirty_w   = fp_commit & (ex_mem_f_reg_write | ex_mem_fp_active);
+
+    csr_register_file #(
+        .ENABLE_F_EXTENSION(ENABLE_F)
+    ) CSR_RF (
+        .fflags_set(ex_mem_fflags),
+        .fflags_we(fflags_we_w),
+        .fs_dirty(fs_dirty_w),
+        .frm_out(frm_val),
+        .fs_off_out(fs_off_val),
+        .clk(clk),
+        .reset_n(reset_n),
+        .meip_i(meip_i),
+        .msip_i(msip_i),
+        .mtip_i(mtip_i),
+        .csr_addr(id_ex_csr_addr),
+        .csr_read_data(csr_read_data_rf),
+        .csr_addr_lane1(12'd0),
+        .csr_read_data_lane1(),
+        .csr_write_addr(ex_mem_csr_addr),
+        .csr_write_data(ex_mem_csr_write_data),
+        .csr_op(ex_mem_csr_op),
+        .csr_write_en(ex_mem_csr_we),
+        .count_en(!dbg_halted),
+        .instret_en(instret_pulse),   // khoan no I - dem LENH RETIRE, khong dem chu ky
+        .trap_enter(trap_enter),
+        .trap_commit(trap_commit),
+        .mret_exec(mret_exec),
+        .mret_commit(mret_commit),
+        .trap_cause(trap_cause),
+        .trap_pc(trap_pc_value),
+        .trap_val(trap_val_value),
+        .mtvec_out(mtvec_pc),
+        .mepc_out(mepc_pc),
+        .mie_out(mie_val),
+        .mstatus_mie(mstatus_mie_val),
+        .trap_clic_irq(is_clic_irq),
+        .clic_level(clic_irq_level_i),
+        .clic_mode(clic_mode),
+        .mil_out(clic_mil),
+        .mintthresh_out(clic_mintthresh),
+        .dbg_halt_req(dbg_halt_req),
+        .dbg_halted(dbg_halted),
+        .debug_pc_in(pc_in),
+        .dpc_out(dpc_out),
+        .dcsr_out(dcsr_out),
+        .dbg_reg_read_addr(dbg_reg_read_addr[11:0]),
+        .dbg_read_data(csr_dbg_read_data_rf),
+        .dbg_reg_write_en(dbg_csr_we),
+        .dbg_reg_write_addr(dbg_reg_write_addr[11:0]),
+        .dbg_reg_write_data(dbg_reg_write_data),
+        .csr_illegal_write(csr_illegal_write),
+        .csr_illegal_addr(csr_illegal_addr)
+    );
+
+    // -------------------------------------------------------------------------
+    // PMP - CSR nam trong pmp_unit, mux vao hai cong doc cua CSR file.
+    // -------------------------------------------------------------------------
+    function automatic is_pmp_csr;
+        input [11:0] a;
+        begin
+            is_pmp_csr = (a[11:2] == 10'b0011_1010_00) || (a[11:4] == 8'h3B);
+        end
+    endfunction
+
+    wire [31:0] pmp_rdata_a, pmp_rdata_b, pmp_wr_result;
+
+    pmp_unit #(.PMP_ENTRIES(8)) PMP (
+        .clk       (clk),
+        .reset_n   (reset_n),
+        // Cung dieu kien voi nhanh ghi CSR thuong trong csr_register_file.
+        .csr_we    (ex_mem_csr_we && (ex_mem_csr_op != 2'b00) &&
+                    !trap_enter && !mret_exec && is_pmp_csr(ex_mem_csr_addr)),
+        .csr_waddr (ex_mem_csr_addr),
+        .csr_wdata (ex_mem_csr_write_data),
+        .rd_addr_a (id_ex_csr_addr),
+        .rd_data_a (pmp_rdata_a),
+        .rd_addr_b (dbg_reg_read_addr[11:0]),
+        .rd_data_b (pmp_rdata_b),
+        .wr_result (pmp_wr_result),
+        .d_addr    (ex_mem_alu_result),
+        .d_read    (ex_mem_mem_read),
+        .d_write   (ex_mem_mem_write),
+        .d_fault   (pmp_d_fault),
+        .i_addr    (if_id_pc_in),
+        .i_fault   (pmp_i_fault)
+    );
+
+    assign csr_read_data_raw = is_pmp_csr(id_ex_csr_addr)           ? pmp_rdata_a : csr_read_data_rf;
+    assign csr_dbg_read_data = is_pmp_csr(dbg_reg_read_addr[11:0])  ? pmp_rdata_b : csr_dbg_read_data_rf;
+
+    // Forwarding CSR: lenh ngay truoc dang ghi dung CSR nay. Voi PMP phai
+    // chuyen tiep gia tri SAU WARL VA KHOA (pmp_wr_result): mau "ghi roi doc
+    // lai de kiem khoa" cua boot ROM se thay du lieu vua ghi neu chuyen tiep
+    // nguyen si, du entry da khoa va thanh ghi khong doi.
+    assign csr_read_data_fwd =
+        (ex_mem_csr_we && (ex_mem_csr_addr == id_ex_csr_addr)) ?
+        (is_pmp_csr(id_ex_csr_addr) ? pmp_wr_result : ex_mem_csr_write_data) :
+        csr_read_data_raw;
+
+    register_file RF (
+        .clk(clk),
+        .reset_n(reset_n),
+        .read_reg1(rs1),
+        .read_reg2(rs2),
+        .read_reg1_lane1(5'd0),
+        .read_reg2_lane1(5'd0),
+        .mem_wb_reg_write(mem_wb_reg_write),
+        .mem_wb_rd(mem_wb_rd),
+        .mem_wb_write_data(wb_write_data),
+        .mem_wb_reg_write_lane1(1'b0),
+        .mem_wb_rd_lane1(5'd0),
+        .mem_wb_write_data_lane1(32'd0),
+        .ooo_commit_valid0(1'b0),
+        .ooo_commit_rd0(5'd0),
+        .ooo_commit_data0(32'd0),
+        .ooo_commit_valid1(1'b0),
+        .ooo_commit_rd1(5'd0),
+        .ooo_commit_data1(32'd0),
+        .read_data1(read_data1_temp),
+        .read_data2(read_data2_temp),
+        .read_data1_lane1(),
+        .read_data2_lane1(),
+        .dbg_mode(dbg_halted),
+        .dbg_read_addr(dbg_reg_read_addr[4:0]),
+        .dbg_read_data(rf_dbg_read_data),
+        .dbg_write_en(dbg_gpr_we),
+        .dbg_write_addr(dbg_reg_write_addr[4:0]),
+        .dbg_write_data(dbg_reg_write_data)
+    );
+
+    assign read_data1 = (rs1 != 5'd0 && rs1 == mem_wb_rd && mem_wb_reg_write) ?
+                        wb_write_data : read_data1_temp;
+    assign read_data2 = (rs2 != 5'd0 && rs2 == mem_wb_rd && mem_wb_reg_write) ?
+                        wb_write_data : read_data2_temp;
+
+    // =========================================================================
+    // Tep thanh ghi dau phay dong (3R1W).
+    //
+    // Truoc 2026-09-18 module nay TON TAI trong register_file.v nhung KHONG duoc
+    // instantiate o dau ca - hai dong `assign ... = 32'd0` thay cho no. Do la
+    // mot trong ba cho cat duong F ma ghi chu o khoi ID/EX ben duoi mo ta.
+    //
+    // KHAC tep so nguyen o hai diem, ca hai deu de sai neu chep nguyen:
+    //   * f0 la thanh ghi THAT - khong co ngoai le "doc ra 0, ghi thi bo".
+    //   * Ba cong doc thay vi hai, vi FMA can f[rs1], f[rs2] va f[rs3] cung luc.
+    //
+    // Khi ENABLE_F = 0 thi ca khoi bi tat: khong instantiate, khong 32 thanh ghi
+    // 32 bit chet nam trong netlist.
+    // =========================================================================
+    wire [31:0] frf_read_data1, frf_read_data2, frf_read_data3;
+
+    generate
+    if (ENABLE_F) begin : gen_fregfile
+        f_register_file FRF (
+            .clk(clk),
+            .reset_n(reset_n),
+            .read_reg1(rs1),
+            .read_reg2(rs2),
+            .read_reg3(fs3),
+            .read_reg1_lane1(5'd0),
+            .read_reg2_lane1(5'd0),
+            .read_data1(frf_read_data1),
+            .read_data2(frf_read_data2),
+            .read_data3(frf_read_data3),
+            .read_data1_lane1(),
+            .read_data2_lane1(),
+            .reg_write_en(mem_wb_f_reg_write),
+            .write_reg(mem_wb_rd),
+            .write_data(wb_f_write_data),
+            .reg_write_en_lane1(1'b0),
+            .write_reg_lane1(5'd0),
+            .write_data_lane1(32'd0),
+            .dbg_mode(dbg_halted),
+            .dbg_read_addr(dbg_reg_read_addr[4:0]),
+            .dbg_read_data(frf_dbg_read_data),
+            .dbg_write_en(dbg_fpr_we),
+            .dbg_write_addr(dbg_reg_write_addr[4:0]),
+            .dbg_write_data(dbg_reg_write_data)
+        );
+    end else begin : no_fregfile
+        assign frf_read_data1  = 32'd0;
+        assign frf_read_data2  = 32'd0;
+        assign frf_read_data3  = 32'd0;
+        assign frf_dbg_read_data = 32'd0;
+    end
+    endgenerate
+
+    // Bypass ghi-doc trong CUNG chu ky, y het read_data1/read_data2 ben x: tep
+    // thanh ghi ghi o suon len nen mot lenh o ID doc cung thanh ghi ma MEM/WB
+    // dang ghi se lay gia tri CU. Ben x da co duong nay san; ben f thi chua bao
+    // gio co vi tep chua tung duoc noi.
+    assign read_f_data1 = (mem_wb_f_reg_write && (mem_wb_rd == rs1)) ?
+                          wb_f_write_data : frf_read_data1;
+    assign read_f_data2 = (mem_wb_f_reg_write && (mem_wb_rd == rs2)) ?
+                          wb_f_write_data : frf_read_data2;
+    assign read_f_data3 = (mem_wb_f_reg_write && (mem_wb_rd == fs3)) ?
+                          wb_f_write_data : frf_read_data3;
+
+    // Ghi nguoc ve tep f: `flw` lay du lieu tu duong bo nho, moi lenh F khac lay
+    // tu FPU. Giong het write_back cua duong so nguyen, chi khac nguon.
+    assign wb_f_write_data = mem_wb_f_mem_to_reg ? mem_wb_mem_read_data
+                                                 : mem_wb_fpu_result;
+
+    id_ex_register #(.ROB_TAG_W(ROB_TAG_W)) ID_EX (
+        .clk(clk),
+        .reset_n(reset_n),
+        .stall(stall_id_ex),
+        .flush(flush_id_ex),
+        .riscv_start(riscv_start),
+        .riscv_done(riscv_done),
+        .rob_tag({ROB_TAG_W{1'b0}}),
+        .rob_valid(1'b0),
+        .if_id_valid(if_id_valid),
+        // PMP-X gop vao bit loi lay lenh o day: dia chi if_id_pc_in la flop,
+        // nen bo so sanh PMP nam giua hai flop, khong o sau PC-mux.
+        .if_id_fault(if_id_fault | pmp_i_fault),
+        .illegal_instr(illegal_instr),
+        .if_id_pc_plus_4(if_id_pc_plus_4),
+        .if_id_pc_in(if_id_pc_in),
+        .funct3(funct3),
+        .read_data1(read_data1),
+        .read_data2(read_data2),
+        .ext_imm(ext_imm),
+        .rs1(rs1),
+        .rs2(rs2),
+        .rd(rd),
+        .reg_write(reg_write),
+        .alu_src(alu_src),
+        .mem_write(mem_write),
+        .mem_read(mem_read),
+        .mem_to_reg(mem_to_reg),
+        .branch(branch),
+        .jal(jal),
+        .jalr(jalr),
+        .lui(lui),
+        .auipc(auipc),
+        .mem_unsigned(mem_unsigned),
+        .mem_size(mem_size),
+        .alu_ctrl(alu_ctrl),
+        .branch_target(branch_target),
+        .jal_target(jal_target),
+        .if_id_predict_taken(if_id_predict_taken),
+        .if_id_btb_hit(if_id_btb_hit),
+        .ecall(ecall),
+        .ebreak(ebreak),
+        .mret(mret),
+        .fence_op(fence_op),
+        .csr_addr(csr_addr),
+        .csr_op(csr_op),
+        .csr_we(csr_we),
+        .md_type(md_type),
+        .md_operation(md_operation),
+        .if_id_instr(if_id_instr),
+        // FPU TAT.  Day la cho duy nhat duong f_* bi cat, va no CO CHU Y:
+        // instance o duoi dat .ENABLE_FPU(0), f_register_file tra ve 0, va
+        // register_file.v da bo bit F khoi misa.  Decoder van sinh f_reg_write
+        // / f_mem_write / f_to_x... (khoang dong 918) nhung khong ai nhan
+        // chung tu day tro di.
+        //
+        // He qua trong bao cao tong hop, de khoi phai dieu tra lai lan sau:
+        // reports/deleted_sequential_syn.rpt cua run 2026-09-12 05:50 liet ke
+        //   u_core/EX_MEM/ex_mem_f_mem_write_reg          constant 0
+        //   u_core/EX_MEM/ex_mem_f_store_data_reg[31:0]   constant 0
+        // Do la 33 flop chet DUNG NHU MONG DOI, khong phai noi sai.  Muon bat
+        // FPU thi phai sua ca ba cho: .ENABLE_FPU(1), bay tin hieu that vao
+        // bay cong duoi day, va khai lai bit F trong misa.
+        .fpu_en(fpu_en),
+        .f_reg_write(f_reg_write),
+        .f_mem_to_reg(f_mem_to_reg),
+        .f_mem_write(f_mem_write),
+        .f_to_x(f_to_x),
+        .x_to_f(x_to_f),
+        .fpu_operation(fpu_operation),
+        .read_f_data1(read_f_data1),
+        .read_f_data2(read_f_data2),
+        .read_f_data3(read_f_data3),
+        .fs3(fs3),
+        .id_ex_pc_plus_4(id_ex_pc_plus_4),
+        .id_ex_pc_in(id_ex_pc_in),
+        .id_ex_funct3(id_ex_funct3),
+        .id_ex_read_data1(id_ex_read_data1),
+        .id_ex_read_data2(id_ex_read_data2),
+        .id_ex_ext_imm(id_ex_ext_imm),
+        .id_ex_rs1(id_ex_rs1),
+        .id_ex_rs2(id_ex_rs2),
+        .id_ex_rd(id_ex_rd),
+        .id_ex_reg_write(id_ex_reg_write),
+        .id_ex_alu_src(id_ex_alu_src),
+        .id_ex_mem_write(id_ex_mem_write),
+        .id_ex_mem_read(id_ex_mem_read),
+        .id_ex_mem_to_reg(id_ex_mem_to_reg),
+        .id_ex_branch(id_ex_branch),
+        .id_ex_jal(id_ex_jal),
+        .id_ex_jalr(id_ex_jalr),
+        .id_ex_lui(id_ex_lui),
+        .id_ex_auipc(id_ex_auipc),
+        .id_ex_mem_unsigned(id_ex_mem_unsigned),
+        .id_ex_mem_size(id_ex_mem_size),
+        .id_ex_alu_ctrl(id_ex_alu_ctrl),
+        .id_ex_branch_target(id_ex_branch_target),
+        .id_ex_jal_target(id_ex_jal_target),
+        .id_ex_predict_taken(id_ex_predict_taken),
+        .id_ex_btb_hit(id_ex_btb_hit),
+        .id_ex_ecall(id_ex_ecall),
+        .id_ex_ebreak(id_ex_ebreak),
+        .id_ex_mret(id_ex_mret),
+        .id_ex_fence_op(id_ex_fence_op),
+        .id_ex_csr_addr(id_ex_csr_addr),
+        .id_ex_csr_op(id_ex_csr_op),
+        .id_ex_csr_we(id_ex_csr_we),
+        .id_ex_md_type(id_ex_md_type),
+        .id_ex_md_operation(id_ex_md_operation),
+        .id_ex_instr(id_ex_instr),
+        .id_ex_fpu_en(id_ex_fpu_en),
+        .id_ex_f_reg_write(id_ex_f_reg_write),
+        .id_ex_f_mem_to_reg(id_ex_f_mem_to_reg),
+        .id_ex_f_mem_write(id_ex_f_mem_write),
+        .id_ex_f_to_x(id_ex_f_to_x),
+        .id_ex_x_to_f(id_ex_x_to_f),
+        .id_ex_fpu_operation(id_ex_fpu_operation),
+        .id_ex_read_f_data1(id_ex_read_f_data1),
+        .id_ex_read_f_data2(id_ex_read_f_data2),
+        .id_ex_read_f_data3(id_ex_read_f_data3),
+        .id_ex_fs3(id_ex_fs3),
+        .id_ex_rob_tag(id_ex_rob_tag),
+        .id_ex_rob_valid(id_ex_rob_valid),
+        .id_ex_valid(id_ex_valid),
+        .id_ex_illegal(id_ex_illegal),
+        .id_ex_fault(id_ex_fault)
+    );
+
+    // =========================================================================
+    // EX
+    // =========================================================================
+    forwarding_unit FU (
+        .id_ex_read_data1(id_ex_read_data1),
+        .id_ex_read_data2(id_ex_read_data2),
+        .id_ex_ext_imm(id_ex_ext_imm),
+        .id_ex_rs1(id_ex_rs1),
+        .id_ex_rs2(id_ex_rs2),
+        .ex_mem_reg_write(ex_mem_reg_write),
+        .mem_wb_reg_write(mem_wb_reg_write),
+        .id_ex_alu_src(id_ex_alu_src),
+        .ex_mem_rd(ex_mem_rd),
+        .mem_wb_rd(mem_wb_rd),
+        .ex_mem_alu_result(ex_mem_alu_result),
+        .mem_wb_write_data(wb_write_data),
+        .id_ex_fs3(id_ex_fs3),
+        .id_ex_read_f_data1(id_ex_read_f_data1),
+        .id_ex_read_f_data2(id_ex_read_f_data2),
+        .id_ex_read_f_data3(id_ex_read_f_data3),
+        .ex_mem_f_reg_write(ex_mem_f_reg_write),
+        .ex_mem_f_mem_to_reg(ex_mem_f_mem_to_reg),
+        .mem_wb_f_reg_write(mem_wb_f_reg_write),
+        .ex_mem_fpu_result(ex_mem_fpu_result),
+        .mem_wb_f_write_data(wb_f_write_data),
+        .alu_in1(alu_in1),
+        .alu_in2(alu_in2),
+        .mem_write_data(mem_write_data),
+        .fpu_in1(fpu_in1),
+        .fpu_in2(fpu_in2),
+        .fpu_in3(fpu_in3)
+    );
+
+    execute #(
+        .ENABLE_MULDIV(1),
+        .ENABLE_FPU(ENABLE_F),
+        .ENABLE_CSR(1),
+        .ENABLE_BRANCH(1)
+    ) EX (
+        .clk(clk),
+        .reset_n(reset_n),
+        .stall_id_ex(stall_id_ex),
+        .alu_in1(alu_in1),
+        .alu_in2(alu_in2),
+        .id_ex_alu_ctrl(id_ex_alu_ctrl),
+        .id_ex_funct3(id_ex_funct3),
+        .id_ex_branch(id_ex_branch),
+        .id_ex_instr(id_ex_instr),
+        .id_ex_lui(id_ex_lui),
+        .id_ex_auipc(id_ex_auipc),
+        .id_ex_md_type(id_ex_md_type),
+        .id_ex_md_operation(id_ex_md_operation),
+        .id_ex_pc_in(id_ex_pc_in),
+        .id_ex_ext_imm(id_ex_ext_imm),
+        .id_ex_csr_op(id_ex_csr_op),
+        .id_ex_csr_we(id_ex_csr_we),
+        .csr_read_data(csr_read_data_fwd),
+        .id_ex_rs1(id_ex_rs1),
+        .id_ex_fpu_en(id_ex_fpu_en),
+        .id_ex_fpu_operation(id_ex_fpu_operation),
+        // Cac cong nay nhan ban DA FORWARD chu khong phai ban thang tu ID/EX -
+        // day chinh la ly do forwarding_unit co ba dau ra fpu_in*. Truoc day
+        // tang EX doc `id_ex_read_f_data1` truc tiep, tuc bo qua forwarding.
+        .id_ex_read_f_data1(fpu_in1),
+        .id_ex_read_f_data2(fpu_in2),
+        .id_ex_read_f_data3(fpu_in3),
+        .id_ex_f_to_x(id_ex_f_to_x),
+        .id_ex_x_to_f(id_ex_x_to_f),
+        .frm_i(frm_val),
+        .alu_result(alu_result),
+        .branch_taken(branch_taken),
+        .csr_write_data(csr_write_data_ex),
+        .mf_alu_stall(mf_alu_stall),
+        .fpu_result_out(fpu_result_out),
+        .fpu_fflags(fpu_fflags),
+        .jalr_target(jalr_target)
+    );
+
+    ex_mem_register #(.ROB_TAG_W(ROB_TAG_W)) EX_MEM (
+        .clk(clk),
+        .reset_n(reset_n),
+        .stall(stall_ex_mem),
+        .flush(flush_ex_mem),
+        .riscv_start(riscv_start),
+        .riscv_done(riscv_done),
+        .id_ex_rob_tag(id_ex_rob_tag),
+        .id_ex_rob_valid(id_ex_rob_valid),
+        .id_ex_valid(id_ex_valid),
+        .id_ex_illegal(id_ex_illegal),
+        .id_ex_fault(id_ex_fault),
+        .alu_result(alu_result),
+        .id_ex_ext_imm(id_ex_ext_imm),
+        .id_ex_rd(id_ex_rd),
+        .id_ex_pc_plus_4(id_ex_pc_plus_4),
+        .id_ex_pc_in(id_ex_pc_in),
+        .id_ex_branch_target(id_ex_branch_target),
+        .id_ex_mem_write(id_ex_mem_write),
+        .id_ex_mem_read(id_ex_mem_read),
+        .id_ex_mem_to_reg(id_ex_mem_to_reg),
+        .id_ex_reg_write(id_ex_reg_write),
+        .id_ex_branch(id_ex_branch),
+        .branch_taken(branch_taken),
+        .id_ex_jal(id_ex_jal),
+        .id_ex_jalr(id_ex_jalr),
+        .jalr_target(jalr_target),
+        .id_ex_mem_unsigned(id_ex_mem_unsigned),
+        .id_ex_mem_size(id_ex_mem_size),
+        .id_ex_read_data2(id_ex_read_data2),
+        .mem_write_data(mem_write_data),
+        .id_ex_predict_taken(id_ex_predict_taken),
+        .id_ex_btb_hit(id_ex_btb_hit),
+        .id_ex_ecall(id_ex_ecall),
+        .id_ex_ebreak(id_ex_ebreak),
+        .id_ex_mret(id_ex_mret),
+        .id_ex_fence_op(id_ex_fence_op),
+        .id_ex_csr_addr(id_ex_csr_addr),
+        .id_ex_csr_op(id_ex_csr_op),
+        .id_ex_csr_we(id_ex_csr_we),
+        .csr_write_data_in(csr_write_data_ex),
+        .id_ex_instr(id_ex_instr),
+        .fpu_result(fpu_result_out),
+        .id_ex_read_f_data2(fpu_in2),   // du lieu ghi cua `fsw`, da forward
+        .id_ex_f_reg_write(id_ex_f_reg_write),
+        .id_ex_f_mem_to_reg(id_ex_f_mem_to_reg),
+        .id_ex_f_mem_write(id_ex_f_mem_write),
+        .fpu_fflags(fpu_fflags),
+        .id_ex_fpu_en(id_ex_fpu_en),
+        .ex_mem_alu_result(ex_mem_alu_result),
+        .ex_mem_branch_target(ex_mem_branch_target),
+        .ex_mem_pc_plus_4(ex_mem_pc_plus_4),
+        .ex_mem_pc_in(ex_mem_pc_in),
+        .ex_mem_rd(ex_mem_rd),
+        .ex_mem_mem_write(ex_mem_mem_write),
+        .ex_mem_mem_read(ex_mem_mem_read),
+        .ex_mem_mem_to_reg(ex_mem_mem_to_reg),
+        .ex_mem_reg_write(ex_mem_reg_write),
+        .ex_mem_branch(ex_mem_branch),
+        .ex_mem_branch_taken(ex_mem_branch_taken),
+        .ex_mem_jal(ex_mem_jal),
+        .ex_mem_jalr(ex_mem_jalr),
+        .ex_mem_jalr_target(ex_mem_jalr_target),
+        .ex_mem_mem_unsigned(ex_mem_mem_unsigned),
+        .ex_mem_mem_size(ex_mem_mem_size),
+        .ex_mem_mem_write_data(ex_mem_mem_write_data),
+        .ex_mem_predict_taken(ex_mem_predict_taken),
+        .ex_mem_btb_hit(ex_mem_btb_hit),
+        .ex_mem_ecall(ex_mem_ecall),
+        .ex_mem_ebreak(ex_mem_ebreak),
+        .ex_mem_mret(ex_mem_mret),
+        .ex_mem_fence_op(ex_mem_fence_op),
+        .ex_mem_csr_addr(ex_mem_csr_addr),
+        .ex_mem_csr_op(ex_mem_csr_op),
+        .ex_mem_csr_we(ex_mem_csr_we),
+        .ex_mem_csr_write_data(ex_mem_csr_write_data),
+        .ex_mem_instr(ex_mem_instr),
+        .ex_mem_fpu_result(ex_mem_fpu_result),
+        .ex_mem_f_store_data(ex_mem_f_store_data),
+        .ex_mem_f_reg_write(ex_mem_f_reg_write),
+        .ex_mem_f_mem_to_reg(ex_mem_f_mem_to_reg),
+        .ex_mem_f_mem_write(ex_mem_f_mem_write),
+        .ex_mem_fflags(ex_mem_fflags),
+        .ex_mem_fp_active(ex_mem_fp_active),
+        .ex_mem_rob_tag(ex_mem_rob_tag),
+        .ex_mem_rob_valid(ex_mem_rob_valid),
+        .ex_mem_valid(ex_mem_valid),
+        .ex_mem_illegal(ex_mem_illegal),
+        .ex_mem_fault(ex_mem_fault)
+    );
+
+    // =========================================================================
+    // MEM
+    // =========================================================================
+    assign final_mem_write_data =
+        ex_mem_f_mem_write ? ex_mem_f_store_data : ex_mem_mem_write_data;
+
+    memory_access MEM (
+        .clk(clk),
+        .reset_n(reset_n),
+        .ex_mem_alu_result(ex_mem_alu_result),
+        .ex_mem_mem_write_data(final_mem_write_data),
+        .ex_mem_instr(ex_mem_instr),
+        .ex_mem_mem_write(ex_mem_mem_write | ex_mem_f_mem_write),
+        .ex_mem_mem_read(ex_mem_mem_read),
+        .ex_mem_fence_op(ex_mem_fence_op),
+        // KHOAN NO C - chan GHI to hop ngay trong chu ky nhan trap. flush_ex_mem
+        // chi co hieu luc o suon xung ke tiep, nen khong co day nay thi mot `sw`
+        // van GHI THAT roi chay lai sau mret -> ghi hai lan.
+        .commit_kill(trap_enter),
+        .mem_read_data(mem_read_data),
+        .dcache_read_req(dcache_read_req),
+        .dcache_write_req(dcache_write_req),
+        .dcache_fence(dcache_fence),
+        .dcache_addr(dcache_addr),
+        .dcache_write_data(dcache_write_data),
+        .dcache_read_data(dcache_read_data),
+        .dcache_amo_req(dcache_amo_req),
+        .dcache_amo_capture(dcache_amo_capture)
+    );
+
+    mem_wb_register #(.ROB_TAG_W(ROB_TAG_W)) MEM_WB (
+        .clk(clk),
+        .reset_n(reset_n),
+        .stall(stall_mem_wb),
+        .flush(flush_mem_wb),
+        .riscv_start(riscv_start),
+        .riscv_done(riscv_done),
+        .ex_mem_rob_tag(ex_mem_rob_tag),
+        .ex_mem_rob_valid(ex_mem_rob_valid),
+        .mem_read_data(mem_read_data),
+        .ex_mem_pc_plus_4(ex_mem_pc_plus_4),
+        .ex_mem_mem_to_reg(ex_mem_mem_to_reg),
+        .ex_mem_reg_write(ex_mem_reg_write),
+        // R14 - `mem_wb_jal` la "rd nhan dia chi tra ve (pc_plus_4)", nen JALR
+        // cung phai bat no. Truoc day chi JAL bat: decoder khong dat `jal` cho
+        // JALR, nen `jalr ra, 0(t0)` / `c.jalr` ghi ra = t0 + imm - chinh DICH
+        // NHAY - va ham duoc goi `ret` ve dau chinh no. `ret` (rd = x0) va JAL
+        // khong bi anh huong. Khong the dat `jal` = 1 cho JALR o decoder vi bit
+        // do con dieu khien flush_jal / id_ex_jal_target o tang ID/EX.
+        // Chuyen tiep tu EX/MEM (ex_mem_alu_result) van mang dich nhay, nhung
+        // khong lenh nao doc duoc no: lenh ke sau JALR tren duong DUNG chi toi
+        // ID/EX sau khi JALR da qua MEM/WB (xem R13 o tren).
+        .ex_mem_jal(ex_mem_jal | ex_mem_jalr),
+        .ex_mem_alu_result(ex_mem_alu_result),
+        .ex_mem_rd(ex_mem_rd),
+        .ex_mem_ecall(ex_mem_ecall),
+        .ex_mem_fpu_result(ex_mem_fpu_result),
+        .ex_mem_f_reg_write(ex_mem_f_reg_write),
+        .ex_mem_f_mem_to_reg(ex_mem_f_mem_to_reg),
+        .mem_wb_mem_read_data(mem_wb_mem_read_data),
+        .mem_wb_pc_plus_4(mem_wb_pc_plus_4),
+        .mem_wb_alu_result(mem_wb_alu_result),
+        .mem_wb_mem_to_reg(mem_wb_mem_to_reg),
+        .mem_wb_reg_write(mem_wb_reg_write),
+        .mem_wb_jal(mem_wb_jal),
+        .mem_wb_rd(mem_wb_rd),
+        .mem_wb_ecall(mem_wb_ecall),
+        .mem_wb_fpu_result(mem_wb_fpu_result),
+        .mem_wb_f_reg_write(mem_wb_f_reg_write),
+        .mem_wb_f_mem_to_reg(mem_wb_f_mem_to_reg),
+        .mem_wb_rob_tag(mem_wb_rob_tag),
+        .mem_wb_rob_valid(mem_wb_rob_valid)
+    );
+
+    write_back WB (
+        .mem_wb_mem_read_data(mem_wb_mem_read_data),
+        .mem_wb_alu_result(mem_wb_alu_result),
+        .mem_wb_pc_plus_4(mem_wb_pc_plus_4),
+        .mem_wb_mem_to_reg(mem_wb_mem_to_reg),
+        .mem_wb_jal(mem_wb_jal),
+        .mem_wb_write_data(wb_write_data)
+    );
+
+    // =========================================================================
+    // Control and branch prediction
+    // =========================================================================
+    pipeline_control_unit PCU (
+        .clk(clk),
+        .reset_n(reset_n),
+        .opcode(opcode),
+        .funct3(funct3),
+        .rs1(rs1),
+        .rs2(rs2),
+        .id_ex_mem_read(id_ex_mem_read),
+        // G4 - interlock phai dua tren mem_to_reg: SC.W co mem_read = 0 nhung
+        // rd VAN nhan ma trang thai 0/1 tu duong bo nho.
+        .id_ex_mem_to_reg(id_ex_mem_to_reg),
+        // RV32F - interlock rieng cho thanh ghi f. `flw` la lenh F duy nhat lay
+        // ket qua tu duong bo nho va no khong co duong forward.
+        .id_ex_f_mem_to_reg(id_ex_f_mem_to_reg),
+        .uses_fs1(uses_fs1),
+        .uses_fs2(uses_fs2),
+        .uses_fs3(uses_fs3),
+        .fs3(fs3),
+        .id_x_to_f(x_to_f),
+        .id_ex_jal(id_ex_jal),
+        .id_ex_jalr(id_ex_jalr),
+        .ex_mem_jalr(ex_mem_jalr),
+        .id_ex_rd(id_ex_rd),
+        .bpu_correct(bpu_correct),
+        .trap_enter(trap_enter),
+        .mret_exec(mret_exec),
+        .icache_stall(icache_stall),
+        .dcache_stall(dcache_stall),
+        .mf_alu_stall(mf_alu_stall),
+        .wfi_req(wfi_req_internal),
+        .trap_interrupt(wake_interrupt),
+        .is_sleeping(is_sleeping_internal),
+        .dbg_halt_req(dbg_halt_req),
+        .dbg_resume_req(dbg_resume_req),
+        .dcsr_step(dcsr_out[2]),
+        .dbg_halted(dbg_halted),
+        .load_use_stall(load_use_stall),
+        .flush_branch(flush_branch),
+        .flush_jal(flush_jal),
+        .flush_jalr(flush_jalr),
+        .flush_trap(flush_trap),
+        .stall_IF(stall_IF),
+        .stall_ID(stall_ID),
+        .stall_EX(stall_EX),
+        .stall_MEM(stall_MEM),
+        .stall_WB(stall_WB)
+    );
+
+    branch_prediction_unit BPU (
+        .clk(clk),
+        .reset_n(reset_n),
+        .stall(stall_mem_wb),
+        .pc_in(pc_in),
+        .ex_mem_pc_in(ex_mem_pc_in),
+        .ex_mem_branch(ex_mem_branch),
+        .ex_mem_branch_taken(ex_mem_branch_taken),
+        .ex_mem_predict_taken(ex_mem_predict_taken),
+        .ex_mem_btb_hit(ex_mem_btb_hit),
+        .ex_mem_branch_target(ex_mem_branch_target),
+        .bpu_correct(bpu_correct),
+        .predict_taken(predict_taken),
+        .btb_hit(btb_hit),
+        .actual_taken(actual_taken),
+        .predict_target(predict_target)
+    );
+
+    // =========================================================================
+    // Done
+    // =========================================================================
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            riscv_done <= 1'b0;
+        end else if (riscv_start && (HALT_ON_ECALL != 0)) begin
+            // Chi dung han khi duoc yeu cau tuong minh (bo dung nghiem thu cu).
+            // Mac dinh HALT_ON_ECALL = 0: `ecall` chi la mot trap binh thuong,
+            // riscv_done giu 0 mai mai va loi chay tiep.
+            if (ex_mem_ecall || mem_wb_ecall) begin
+                riscv_done <= 1'b1;
+            end
+        end
+    end
+
+endmodule

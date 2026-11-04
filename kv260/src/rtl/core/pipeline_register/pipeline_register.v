@@ -1,0 +1,426 @@
+//==================================================================================================
+// File: pipeline_register.v
+//==================================================================================================
+`timescale 1ns / 1ps
+
+module if_id_register (
+    input clk, reset_n,
+    input stall, input flush,
+    input riscv_start, input riscv_done,
+    input [31:0] instr, pc_plus_4, pc_in,
+    input predict_taken, btb_hit,
+    input instr_fault,                      // B3 - loi bus khi lay lenh nay
+    output reg [31:0] if_id_instr, if_id_pc_plus_4, if_id_pc_in,
+    output reg if_id_predict_taken, if_id_btb_hit,
+    // -----------------------------------------------------------------------
+    // KHOAN NO I - bit "day la LENH THAT, khong phai bong bong", sinh o day va
+    // chay suot ba thanh ghi pipeline.
+    //
+    // Truoc day khong tang nao co bit nay. flush KHONG xoa pc_in, nen mot bong
+    // bong van "trong giong" mot lenh that: no mang PC CU. Hai hau qua deu that:
+    //   1. minstret dem ca bong bong load-use / flush_jal / flush_temp.
+    //   2. NANG HON: ngat roi vao dung chu ky do se dat mepc = PC cua mot lenh
+    //      DA RETIRE -> mret chay lai no. Do la ly do irq_ok phai AND voi
+    //      ex_mem_valid trong riscv_pipeline.v.
+    //
+    // Gia: ba flip-flop.
+    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // B3 - bit "lenh nay lay ve tu mot dia chi LOI BUS" (mcause 1).
+    //
+    // I-cache bao loi luc FETCH, nhung trap phai duoc nhan o tang MEM cung voi
+    // moi trap khac. Nen bit nay phai di suot pipeline y het bit `illegal`:
+    // xoa khi flush (bong bong khong duoc mang loi), giu khi stall.
+    // -------------------------------------------------------------------------
+    output reg if_id_valid,
+    output reg if_id_fault
+);
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            if_id_pc_in <= 32'd0;
+            if_id_instr <= 32'h00000013;
+            if_id_pc_plus_4 <= 32'd0;
+            if_id_predict_taken <= 1'b0;
+            if_id_btb_hit <= 1'b0;
+            if_id_valid <= 1'b0;
+            if_id_fault <= 1'b0;
+        end else if (riscv_start && !riscv_done) begin            
+            if (flush) begin
+                if_id_instr <= 32'h00000013; // NOP (addi x0, x0, 0)
+                if_id_predict_taken <= 1'b0;
+                if_id_btb_hit <= 1'b0;
+                if_id_valid <= 1'b0;
+                if_id_fault <= 1'b0;
+            end else if (stall) begin
+                // Đóng băng, không thay đổi giá trị
+            end else begin
+                if_id_valid <= 1'b1;
+                if_id_fault <= instr_fault;
+                if_id_pc_in <= pc_in;
+                if_id_instr <= instr;
+                if_id_pc_plus_4 <= pc_plus_4;
+                if_id_predict_taken <= predict_taken;
+                if_id_btb_hit <= btb_hit;
+            end
+        end
+    end
+endmodule
+
+
+module id_ex_register #(
+    parameter ROB_TAG_W = 6
+) (
+    input clk, reset_n,
+    input stall, input flush,
+    input riscv_start, input riscv_done,
+    input [ROB_TAG_W-1:0] rob_tag,
+    input rob_valid,
+    input if_id_valid,             // khoan no I - xem ghi chu o if_id_register
+    input illegal_instr,           // V5 - ma lenh khong ton tai, di toi EX/MEM
+    input if_id_fault,             // B3 - loi bus khi lay lenh, di toi EX/MEM
+    input [31:0] if_id_pc_plus_4, if_id_pc_in,
+    input [2:0] funct3,
+    input [31:0] read_data1, read_data2, ext_imm,
+    input [4:0] rs1, rs2, rd,
+    input reg_write, alu_src, mem_write, mem_read, mem_to_reg,
+    input branch, jal, jalr, lui, auipc, mem_unsigned,
+    input [1:0] mem_size,
+    input [3:0] alu_ctrl,
+    input [31:0] branch_target, jal_target,
+    input if_id_predict_taken, if_id_btb_hit,
+    input ecall, ebreak, mret,
+    input fence_op,                // P2c - `fence` xa store buffer cua D-cache
+    input [11:0] csr_addr,
+    input [1:0] csr_op,
+    input csr_we, md_type,
+    input [2:0] md_operation,
+    input [31:0] if_id_instr,
+    input fpu_en, f_reg_write, f_mem_to_reg, f_mem_write, f_to_x, x_to_f,
+    input [4:0] fpu_operation,
+    input [31:0] read_f_data1, read_f_data2,
+    // RV32F - toan hang thu BA cua nhom FMA. fs3 = instr[31:27], KHONG trung vi
+    // tri voi rs1 / rs2 nen phai mang rieng qua ID/EX (forwarding_unit can no de
+    // so voi ex_mem_rd / mem_wb_rd).
+    input [4:0] fs3,
+    input [31:0] read_f_data3,
+  
+    // Outputs giữ nguyên tên như cũ
+    output reg [31:0] id_ex_pc_plus_4, id_ex_pc_in,
+    output reg [2:0] id_ex_funct3,
+    output reg [31:0] id_ex_read_data1, id_ex_read_data2, id_ex_ext_imm,
+    output reg [4:0] id_ex_rs1, id_ex_rs2, id_ex_rd,
+    output reg id_ex_reg_write, id_ex_alu_src, id_ex_mem_write, id_ex_mem_read, id_ex_mem_to_reg,
+    output reg id_ex_branch, id_ex_jal, id_ex_jalr, id_ex_lui, id_ex_auipc, id_ex_mem_unsigned,
+    output reg [1:0] id_ex_mem_size,
+    output reg [3:0] id_ex_alu_ctrl,
+    output reg [31:0] id_ex_branch_target, id_ex_jal_target,
+    output reg id_ex_predict_taken, id_ex_btb_hit, id_ex_ecall, id_ex_ebreak, id_ex_mret,
+    output reg id_ex_fence_op,
+    output reg [11:0] id_ex_csr_addr,
+    output reg [1:0] id_ex_csr_op,
+    output reg id_ex_csr_we, id_ex_md_type,
+    output reg [2:0] id_ex_md_operation,
+    output reg [31:0] id_ex_instr,
+    output reg id_ex_fpu_en, id_ex_f_reg_write, id_ex_f_mem_to_reg, id_ex_f_mem_write,
+    output reg id_ex_f_to_x, id_ex_x_to_f,
+    output reg [4:0] id_ex_fpu_operation,
+    output reg [31:0] id_ex_read_f_data1, id_ex_read_f_data2, id_ex_read_f_data3,
+    output reg [4:0] id_ex_fs3,
+    output reg [ROB_TAG_W-1:0] id_ex_rob_tag,
+    output reg id_ex_rob_valid,
+    output reg id_ex_valid,
+    output reg id_ex_illegal,
+    output reg id_ex_fault
+);
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            id_ex_instr <= 32'h00000013;
+            id_ex_rob_tag <= {ROB_TAG_W{1'b0}};
+            id_ex_rob_valid <= 1'b0;
+            id_ex_reg_write <= 1'b0; id_ex_alu_src <= 1'b0;
+            id_ex_mem_write <= 1'b0; id_ex_mem_read <= 1'b0; id_ex_mem_to_reg <= 1'b0;
+            id_ex_branch <= 1'b0; id_ex_jal <= 1'b0; id_ex_jalr <= 1'b0;
+            id_ex_lui <= 1'b0; id_ex_auipc <= 1'b0; id_ex_mem_unsigned <= 1'b0;
+            id_ex_mem_size <= 2'b00; id_ex_alu_ctrl <= 4'b0010;
+            id_ex_predict_taken <= 1'b0; id_ex_btb_hit <= 1'b0;
+            id_ex_csr_we <= 1'b0; id_ex_csr_op <= 2'b00;
+            id_ex_md_type <= 1'b0; id_ex_md_operation <= 3'b000;
+            id_ex_fpu_en <= 1'b0; id_ex_f_reg_write <= 1'b0;
+            id_ex_f_mem_to_reg <= 1'b0; id_ex_f_mem_write <= 1'b0;
+            id_ex_f_to_x <= 1'b0; id_ex_x_to_f <= 1'b0;
+            id_ex_fpu_operation <= 5'd0;
+            id_ex_ecall <= 1'b0; id_ex_mret <= 1'b0; id_ex_ebreak <= 1'b0;
+            id_ex_fence_op <= 1'b0;
+            id_ex_valid <= 1'b0; id_ex_illegal <= 1'b0; id_ex_fault <= 1'b0;
+            // (Reset các biến khác nếu cần, nhưng các tín hiệu điều khiển trên là quan trọng nhất)
+        end else if (riscv_start && !riscv_done) begin
+            if (flush) begin
+                // BÆ¡m NOP (Chá»‰ cáº§n táº¯t cÃ¡c cá» thay Ä‘á»•i tráº¡ng thÃ¡i há»‡ thá»‘ng)
+                id_ex_instr <= 32'h00000013;
+                id_ex_rob_valid <= 1'b0;
+                // Bong bong: khong phai lenh that, va khong duoc mang bit illegal
+                // cua lenh vua bi xoa - neu khong thi trap se ban vao mot NOP.
+                id_ex_valid <= 1'b0;
+                id_ex_illegal <= 1'b0;
+                id_ex_fault <= 1'b0;
+                id_ex_reg_write <= 1'b0;
+                id_ex_alu_src <= 1'b0;
+                id_ex_mem_write <= 1'b0;
+                id_ex_mem_read <= 1'b0;
+                id_ex_mem_to_reg <= 1'b0;
+                id_ex_branch <= 1'b0;
+                id_ex_jal <= 1'b0;
+                id_ex_jalr <= 1'b0;
+                id_ex_lui <= 1'b0;
+                id_ex_auipc <= 1'b0;
+                id_ex_mem_unsigned <= 1'b0;
+                id_ex_mem_size <= 2'b00;
+                id_ex_alu_ctrl <= 4'b0010;
+                id_ex_predict_taken <= 1'b0;
+                id_ex_btb_hit <= 1'b0;
+                id_ex_ecall <= 1'b0; 
+                id_ex_ebreak <= 1'b0; 
+                id_ex_mret <= 1'b0; 
+                // P2c - bong bong khong duoc mang fence.  Bit nay giu ca
+                // pipeline lai cho toi khi store buffer xa; de no song qua flush
+                // la tu tang do tre cua moi lan doan nham nhanh.
+                id_ex_fence_op <= 1'b0;
+                id_ex_csr_we <= 1'b0;
+                id_ex_csr_op <= 2'b00;
+                id_ex_md_type <= 1'b0;
+                id_ex_md_operation <= 3'b000;
+                id_ex_fpu_en <= 1'b0;
+                id_ex_f_reg_write <= 1'b0;
+                id_ex_f_mem_to_reg <= 1'b0;
+                id_ex_f_mem_write <= 1'b0;
+                id_ex_f_to_x <= 1'b0;
+                id_ex_x_to_f <= 1'b0;
+            end else if (stall) begin
+                // Đóng băng
+            end else begin
+                // Cập nhật bình thường
+                id_ex_pc_plus_4 <= if_id_pc_plus_4; id_ex_pc_in <= if_id_pc_in;
+                id_ex_rob_tag <= rob_tag;
+                id_ex_rob_valid <= rob_valid;
+                id_ex_valid <= if_id_valid;      // khoan no I - day chuyen bit valid
+                id_ex_illegal <= illegal_instr;
+                id_ex_fault <= if_id_fault;
+                id_ex_funct3 <= funct3;
+                id_ex_read_data1 <= read_data1; id_ex_read_data2 <= read_data2;
+                id_ex_ext_imm <= ext_imm; id_ex_branch_target <= branch_target;
+                id_ex_jal_target <= jal_target;
+                id_ex_rs1 <= rs1; id_ex_rs2 <= rs2; id_ex_rd <= rd;
+                id_ex_alu_src <= alu_src; id_ex_mem_write <= mem_write;
+                id_ex_mem_read <= mem_read; id_ex_mem_to_reg <= mem_to_reg;
+                id_ex_reg_write <= reg_write && (rd != 5'd0); id_ex_branch <= branch;
+                id_ex_jal <= jal; id_ex_jalr <= jalr; id_ex_lui <= lui;
+                id_ex_auipc <= auipc; id_ex_mem_unsigned <= mem_unsigned;
+                id_ex_mem_size <= mem_size; id_ex_alu_ctrl <= alu_ctrl;
+                id_ex_predict_taken <= if_id_predict_taken; id_ex_btb_hit <= if_id_btb_hit;
+                id_ex_instr <= if_id_instr; id_ex_ecall <= ecall;
+                id_ex_ebreak <= ebreak; id_ex_mret <= mret;
+                id_ex_fence_op <= fence_op;
+                id_ex_csr_addr <= csr_addr; id_ex_csr_op <= csr_op; id_ex_csr_we <= csr_we;
+                id_ex_md_type <= md_type; id_ex_md_operation <= md_operation;
+                id_ex_fpu_en <= fpu_en; id_ex_f_reg_write <= f_reg_write;
+                id_ex_f_mem_to_reg <= f_mem_to_reg; id_ex_f_mem_write <= f_mem_write;
+                id_ex_f_to_x <= f_to_x; id_ex_x_to_f <= x_to_f;
+                id_ex_fpu_operation <= fpu_operation;
+                id_ex_read_f_data1 <= read_f_data1; id_ex_read_f_data2 <= read_f_data2;
+                id_ex_read_f_data3 <= read_f_data3; id_ex_fs3 <= fs3;
+            end
+        end
+    end
+endmodule
+
+
+module ex_mem_register #(
+    parameter ROB_TAG_W = 6
+) (
+    input clk, reset_n,
+    input stall, input flush,
+    input riscv_start, input riscv_done,
+    input [ROB_TAG_W-1:0] id_ex_rob_tag,
+    input id_ex_rob_valid,
+    input id_ex_valid,           // khoan no I - xem ghi chu o if_id_register
+    input id_ex_illegal,         // V5 - nguon cua trap_illegal
+    input id_ex_fault,           // B3 - nguon cua trap_instr_access_fault
+    input [31:0] alu_result, id_ex_ext_imm,
+    input [4:0] id_ex_rd,
+    input [31:0] id_ex_pc_plus_4, id_ex_pc_in, id_ex_branch_target,
+    input id_ex_mem_write, id_ex_mem_read, id_ex_mem_to_reg, id_ex_reg_write,
+    input id_ex_branch, branch_taken, id_ex_jal, id_ex_mem_unsigned,
+    // R2 - JALR di qua EX/MEM giong het nhanh dieu kien: co bit hop le rieng va
+    // dia chi dich da tinh xong o tang EX.
+    input id_ex_jalr,
+    input [31:0] jalr_target,
+    input [1:0] id_ex_mem_size,
+    input [31:0] id_ex_read_data2, mem_write_data,
+    input id_ex_predict_taken, id_ex_btb_hit, id_ex_ecall, id_ex_ebreak, id_ex_mret,
+    input id_ex_fence_op,          // P2c
+    input [11:0] id_ex_csr_addr, input [1:0] id_ex_csr_op, input id_ex_csr_we,
+    input [31:0] csr_write_data_in, id_ex_instr, fpu_result, id_ex_read_f_data2,
+    input id_ex_f_reg_write, id_ex_f_mem_to_reg, id_ex_f_mem_write,
+    // RV32F - co ngoai le di CUNG lenh xuong tang MEM, noi duy nhat duoc phep
+    // sua trang thai kien truc. Dat chung ngang hang voi csr_write_data la co y:
+    // ca hai deu phai bi commit_kill / flush chan lai khi lenh bi huy.
+    input [4:0] fpu_fflags,
+    input id_ex_fpu_en,
+
+    // Outputs
+    output reg [31:0] ex_mem_alu_result, ex_mem_branch_target, ex_mem_pc_plus_4, ex_mem_pc_in,
+    output reg [4:0] ex_mem_rd,
+    output reg ex_mem_mem_write, ex_mem_mem_read, ex_mem_mem_to_reg, ex_mem_reg_write,
+    output reg ex_mem_branch, ex_mem_branch_taken, ex_mem_jal, ex_mem_mem_unsigned,
+    output reg ex_mem_jalr,
+    output reg [31:0] ex_mem_jalr_target,
+    output reg [1:0] ex_mem_mem_size,
+    output reg [31:0] ex_mem_mem_write_data,
+    output reg ex_mem_predict_taken, ex_mem_btb_hit, ex_mem_ecall, ex_mem_ebreak, ex_mem_mret,
+    // P2c - nguon cua `dcache_fence`, chan cuoi cung cua duong fence trong core.
+    output reg ex_mem_fence_op,
+    output reg [11:0] ex_mem_csr_addr,
+    output reg [1:0] ex_mem_csr_op,
+    output reg ex_mem_csr_we,
+    output reg [31:0] ex_mem_csr_write_data, ex_mem_instr, ex_mem_fpu_result, ex_mem_f_store_data,
+    output reg ex_mem_f_reg_write, ex_mem_f_mem_to_reg, ex_mem_f_mem_write,
+    output reg [4:0] ex_mem_fflags,
+    output reg ex_mem_fp_active,       // cho phep gop fflags vao fcsr o tang MEM
+    output reg [ROB_TAG_W-1:0] ex_mem_rob_tag,
+    output reg ex_mem_rob_valid,
+    // ex_mem_valid la dieu kien BAT BUOC cua irq_ok va cua instret_pulse trong
+    // riscv_pipeline.v. Lay tu id_ex_valid nen no la mot day chay suot ba tang,
+    // khong phai "khong bi flush o rieng ranh gioi nay".
+    output reg ex_mem_valid,
+    output reg ex_mem_illegal,
+    output reg ex_mem_fault
+);
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            ex_mem_instr <= 32'h00000013;
+            ex_mem_rob_tag <= {ROB_TAG_W{1'b0}};
+            ex_mem_rob_valid <= 1'b0;
+            ex_mem_reg_write <= 1'b0; ex_mem_mem_write <= 1'b0; ex_mem_mem_read <= 1'b0;
+            ex_mem_mem_to_reg <= 1'b0; ex_mem_branch <= 1'b0; ex_mem_branch_taken <= 1'b0;
+            ex_mem_jal <= 1'b0; ex_mem_mem_unsigned <= 1'b0; ex_mem_mem_size <= 2'b00;
+            ex_mem_jalr <= 1'b0;
+            ex_mem_predict_taken <= 1'b0; ex_mem_btb_hit <= 1'b0;
+            ex_mem_csr_we <= 1'b0; ex_mem_csr_op <= 2'b00;
+            ex_mem_ecall <= 1'b0; ex_mem_ebreak <= 1'b0; ex_mem_mret <= 1'b0;
+            ex_mem_fence_op <= 1'b0;
+            ex_mem_f_reg_write <= 1'b0; ex_mem_f_mem_to_reg <= 1'b0; ex_mem_f_mem_write <= 1'b0;
+            ex_mem_fp_active <= 1'b0; ex_mem_fflags <= 5'd0;
+            ex_mem_valid <= 1'b0; ex_mem_illegal <= 1'b0; ex_mem_fault <= 1'b0;
+        end else if (riscv_start && !riscv_done) begin
+            if (flush) begin
+                ex_mem_instr <= 32'h00000013;
+                ex_mem_rob_valid <= 1'b0;
+                ex_mem_valid <= 1'b0;
+                ex_mem_illegal <= 1'b0;
+                ex_mem_fault <= 1'b0;
+                ex_mem_reg_write <= 1'b0;
+                ex_mem_mem_write <= 1'b0;
+                ex_mem_mem_read <= 1'b0;
+                ex_mem_mem_to_reg <= 1'b0;
+                ex_mem_branch <= 1'b0;
+                ex_mem_branch_taken <= 1'b0;
+                ex_mem_jal <= 1'b0;
+                ex_mem_jalr <= 1'b0;
+                ex_mem_predict_taken <= 1'b0;
+                ex_mem_btb_hit <= 1'b0;
+                ex_mem_ecall <= 1'b0;
+                ex_mem_ebreak <= 1'b0; 
+                ex_mem_mret <= 1'b0; 
+                ex_mem_fence_op <= 1'b0;
+                ex_mem_csr_we <= 1'b0;
+                ex_mem_f_reg_write <= 1'b0;
+                ex_mem_f_mem_write <= 1'b0;
+                // Lenh F bi huy KHONG duoc lam ban fflags - bo dieu phoi ngu
+                // canh doc fcsr sau do se thay mot co ngoai le khong ai gay ra.
+                ex_mem_fp_active <= 1'b0;
+            end else if (stall) begin
+                // Đóng băng
+            end else begin
+                ex_mem_alu_result <= alu_result; ex_mem_rd <= id_ex_rd;
+                ex_mem_rob_tag <= id_ex_rob_tag;
+                ex_mem_rob_valid <= id_ex_rob_valid;
+                ex_mem_valid <= id_ex_valid;
+                ex_mem_illegal <= id_ex_illegal;
+                ex_mem_fault <= id_ex_fault;
+                ex_mem_branch_target <= id_ex_branch_target; ex_mem_pc_plus_4 <= id_ex_pc_plus_4;
+                ex_mem_pc_in <= id_ex_pc_in; ex_mem_branch <= id_ex_branch;
+                ex_mem_branch_taken <= branch_taken; ex_mem_jal <= id_ex_jal;
+                ex_mem_jalr <= id_ex_jalr; ex_mem_jalr_target <= jalr_target;
+                ex_mem_mem_unsigned <= id_ex_mem_unsigned; ex_mem_mem_write <= id_ex_mem_write;
+                ex_mem_mem_read <= id_ex_mem_read; ex_mem_mem_to_reg <= id_ex_mem_to_reg;
+                ex_mem_reg_write <= id_ex_reg_write; ex_mem_mem_size <= id_ex_mem_size;
+                ex_mem_mem_write_data <= mem_write_data; ex_mem_predict_taken <= id_ex_predict_taken;
+                ex_mem_btb_hit <= id_ex_btb_hit; ex_mem_instr <= id_ex_instr;
+                ex_mem_ecall <= id_ex_ecall; ex_mem_ebreak <= id_ex_ebreak; ex_mem_mret <= id_ex_mret;
+                ex_mem_fence_op <= id_ex_fence_op;
+                ex_mem_csr_addr <= id_ex_csr_addr; ex_mem_csr_op <= id_ex_csr_op; 
+                ex_mem_csr_we <= id_ex_csr_we; ex_mem_csr_write_data <= csr_write_data_in;
+                ex_mem_fpu_result <= fpu_result; ex_mem_f_store_data <= id_ex_read_f_data2;
+                ex_mem_fflags <= fpu_fflags; ex_mem_fp_active <= id_ex_fpu_en;
+                ex_mem_f_reg_write <= id_ex_f_reg_write; ex_mem_f_mem_to_reg <= id_ex_f_mem_to_reg;
+                ex_mem_f_mem_write <= id_ex_f_mem_write;
+            end
+        end
+    end
+endmodule
+
+
+module mem_wb_register #(
+    parameter ROB_TAG_W = 6
+) (
+    input clk, reset_n,
+    input stall, input flush,
+    input riscv_start, riscv_done,
+    input [ROB_TAG_W-1:0] ex_mem_rob_tag,
+    input ex_mem_rob_valid,
+    input [31:0] mem_read_data, ex_mem_pc_plus_4,
+    input ex_mem_mem_to_reg, ex_mem_reg_write, ex_mem_jal,
+    input [31:0] ex_mem_alu_result,
+    input [4:0] ex_mem_rd,
+    input ex_mem_ecall,
+    input [31:0] ex_mem_fpu_result,
+    input ex_mem_f_reg_write, ex_mem_f_mem_to_reg,
+    
+    // Outputs
+    output reg [31:0] mem_wb_mem_read_data, mem_wb_pc_plus_4, mem_wb_alu_result, mem_wb_fpu_result,
+    output reg mem_wb_mem_to_reg, mem_wb_reg_write, mem_wb_jal, mem_wb_ecall, mem_wb_f_reg_write, mem_wb_f_mem_to_reg,
+    output reg [4:0] mem_wb_rd,
+    output reg [ROB_TAG_W-1:0] mem_wb_rob_tag,
+    output reg mem_wb_rob_valid
+);
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            mem_wb_rob_tag <= {ROB_TAG_W{1'b0}};
+            mem_wb_rob_valid <= 1'b0;
+            mem_wb_mem_to_reg <= 1'b0;
+            mem_wb_reg_write <= 1'b0;
+            mem_wb_jal <= 1'b0;
+            mem_wb_f_reg_write <= 1'b0;
+            mem_wb_f_mem_to_reg <= 1'b0;
+            mem_wb_ecall <= 1'b0;
+        end else if (riscv_start && !riscv_done) begin
+            if (flush) begin
+                mem_wb_reg_write <= 1'b0;
+                mem_wb_rob_valid <= 1'b0;
+                mem_wb_f_reg_write <= 1'b0;
+                mem_wb_ecall <= 1'b0;
+            end else if (stall) begin
+                // Đóng băng
+            end else begin
+                mem_wb_mem_read_data <= mem_read_data; mem_wb_pc_plus_4 <= ex_mem_pc_plus_4;
+                mem_wb_rob_tag <= ex_mem_rob_tag;
+                mem_wb_rob_valid <= ex_mem_rob_valid;
+                mem_wb_alu_result <= ex_mem_alu_result; mem_wb_rd <= ex_mem_rd;
+                mem_wb_mem_to_reg <= ex_mem_mem_to_reg; mem_wb_reg_write <= ex_mem_reg_write;
+                mem_wb_jal <= ex_mem_jal; mem_wb_ecall <= ex_mem_ecall;
+                mem_wb_fpu_result <= ex_mem_fpu_result; mem_wb_f_reg_write <= ex_mem_f_reg_write;
+                mem_wb_f_mem_to_reg <= ex_mem_f_mem_to_reg;
+            end
+        end
+    end    
+endmodule

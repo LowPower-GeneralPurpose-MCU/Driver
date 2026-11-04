@@ -1,7 +1,8 @@
 # MCU SoC trên Kria KV260 — hướng dẫn
 
-Port FPGA cho SoC RISC-V golden (`Script_Backend/Asap7/run_workspace/mcu/genus/rtl`). Thư mục này nằm trong repo `Driver` (`Driver/kv260`) và cần `Script_Backend` nằm cạnh `Driver` (cùng thư mục `MCU_LowPower_GeneralPurpose`).
+Port FPGA cho SoC RISC-V golden. Thư mục `kv260/` **tự chứa đủ mã nguồn**: RTL golden được chép sẵn vào `src/` (xem `src/SOURCE.txt` để biết commit), ảnh ROM firmware đã build sẵn nằm trong `fw/build/rom_inc/`. Chỉ cần chép riêng thư mục này sang máy khác là chạy được, không cần `Script_Backend`.
 
+- Chỉnh RTL ở golden (`Script_Backend`), KHÔNG chỉnh trong `src/`. Sửa xong thì chạy `bash scripts/sync_rtl.sh` (trên máy có `Script_Backend` nằm cạnh `Driver`) để chép lại `src/`, rồi commit.
 - Mọi thứ riêng của FPGA nằm trong `kv260/`. RTL golden chỉ bị sửa đúng một chỗ, là lỗi địa chỉ CLINT (mục 5), và bản sửa đó áp dụng cho cả ASIC.
 - Build dùng project riêng `kv260/vivado/mcu_kv260.xpr` (tạo lại mỗi lần chạy). `MCU_SOC_IOT.xpr` không bị đụng tới.
 
@@ -20,6 +21,8 @@ Port FPGA cho SoC RISC-V golden (`Script_Backend/Asap7/run_workspace/mcu/genus/r
 
 ```
 kv260/
+  src/rtl/, src/tcl/          BẢN SAO RTL golden (61 file) + rtl_filelist.tcl + model SRAM + gen_boot_rom.py; src/SOURCE.txt ghi commit
+  scripts/sync_rtl.sh         chép lại src/ từ Script_Backend
   rtl/clock_gate_bufgce.v     clock_gate bản FPGA (BUFGCE), thay utils/clock_gate.v
   rtl/kv260_soc_core.v        top_soc + reset sync, RTC 32.768 kHz, nối pad, tie flash/SDRAM
   rtl/kv260_top.v             PS (pl_clk0/pl_resetn0) -> MMCM -> SoC, IOBUF ra PMOD
@@ -44,6 +47,14 @@ PS pl_resetn0 AND MMCM locked --> 3FF reset sync --> top_soc rst_n (top_soc tự
 ```
 
 ## 2. Chuẩn bị
+
+### 2.0 Chạy trên máy khác
+
+1. Chép nguyên thư mục `kv260/` (hoặc clone repo `Driver`) sang máy kia. Đường dẫn nào cũng được, nhưng tránh dấu cách và ký tự có dấu.
+2. Cài Vivado 2025.1 có device Kria (`xck26`) và board file KV260. Board file cài qua Vivado: Tools → Vivado Store → Boards → Kria KV260.
+3. Chỉ synth/build bitstream: chỉ cần Vivado. Ảnh ROM firmware đã có sẵn trong `fw/build/rom_inc/` (build cho 50 MHz).
+4. Muốn đổi firmware hoặc chạy mô phỏng: cần thêm GCC RISC-V, `make`, `python`, Git Bash. Nếu Vivado/GCC không nằm ở `E:/Xillinx/2025.1`, đặt `XILINX_ROOT` (cho `fw/Makefile` và `scripts/sim_core.sh`) hoặc `CROSS_COMPILE`.
+5. Trong Tcl Console, đổi `D:/GITHUB_PROJECT/...` ở bước 3 thành đường dẫn `kv260` trên máy đó.
 
 ### 2.1 Trên PC
 

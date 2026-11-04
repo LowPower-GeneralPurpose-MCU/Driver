@@ -11,7 +11,7 @@
 # Bien moi truong (tuy chon):
 #   KV260_SYS_CLK_MHZ  clock SoC, mac dinh 50 (phai khop `make SYS_CLK_HZ=` cua fw/)
 #   KV260_JOBS         so job song song, mac dinh 6
-#   GOLDEN_RTL         cay RTL golden (mac dinh ../../Script_Backend/...)
+#   GOLDEN_RTL         cay RTL (mac dinh kv260/src/rtl - ban sao golden, xem sync_rtl.sh)
 #
 # Dau ra (out/):
 #   mcu_kv260.bit, mcu_kv260.bit.bin (cho xmutil/fpga_manager), mcu_kv260.xsa,

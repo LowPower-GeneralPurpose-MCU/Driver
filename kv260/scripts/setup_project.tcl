@@ -29,7 +29,7 @@ proc kv_env_or {name dflt} {
 
 set KV          [file normalize [file join [file dirname [info script]] ..]]
 set GOLDEN      [file normalize [kv_env_or GOLDEN_RTL \
-                    [file join $KV .. .. Script_Backend Asap7 run_workspace mcu genus rtl]]]
+                    [file join $KV src rtl]]]
 set SYS_CLK_MHZ [kv_env_or KV260_SYS_CLK_MHZ 50]
 
 set PART      xck26-sfvc784-2LV-c
@@ -41,7 +41,7 @@ set ROM_INC   [file join $KV fw build rom_inc]
 # 0. Kiem tra dau vao
 # -----------------------------------------------------------------------------
 if {![file isdirectory $GOLDEN]} {
-    error "SETUP FAIL: khong thay RTL golden: $GOLDEN (Script_Backend phai nam canh Driver, hoac dat GOLDEN_RTL)"
+    error "SETUP FAIL: khong thay RTL golden: $GOLDEN (chay scripts/sync_rtl.sh, hoac dat GOLDEN_RTL)"
 }
 if {![file isfile [file join $GOLDEN .. tcl rtl_filelist.tcl]]} {
     error "SETUP FAIL: khong thay [file join $GOLDEN .. tcl rtl_filelist.tcl]"

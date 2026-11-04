@@ -1,5 +1,7 @@
 # Sinh ra khi chay - tao lai bang fw/Makefile, scripts/sim_core.sh, scripts/build.tcl
-fw/build/
+fw/build/*
+!fw/build/rom_inc/
+!fw/build/sys_clk_hz.txt
 sim/work/
 vivado/
 out/

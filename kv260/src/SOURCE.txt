@@ -1,0 +1,4 @@
+Ban sao RTL golden cho kv260 - KHONG sua o day, sua o Script_Backend roi chay scripts/sync_rtl.sh
+nguon : Script_Backend/Asap7/run_workspace/mcu/genus
+commit: 21877251 2026-11-04 top_soc: feed CLINT the 16-bit offset, not the full 0x0200_xxxx address
+so file: 61
