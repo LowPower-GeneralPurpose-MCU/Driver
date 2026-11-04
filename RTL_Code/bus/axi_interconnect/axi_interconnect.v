@@ -12,9 +12,7 @@ module axi_interconnect
     parameter                       DATA_WIDTH          = 32,
     parameter                       ADDR_WIDTH          = 32,
     parameter                       TRANS_MST_ID_W      = 5,                            // Bus width of original master transaction ID
-    parameter                       ROB_TAG_W           = $clog2(OUTSTANDING_AMT),
-    parameter                       ROB_ID_WIDTH        = ROB_TAG_W + TRANS_MST_ID_W,
-    parameter                       TRANS_SLV_ID_W      = ROB_ID_WIDTH + MST_ID_W,      // {master_id, rob_tag, original_id}
+    parameter                       TRANS_SLV_ID_W      = TRANS_MST_ID_W + MST_ID_W,    // {master_id, original_id}
     parameter                       TRANS_BURST_W       = 2,                            // Width of xBURST 
     parameter                       TRANS_DATA_LEN_W    = 8,                            // Bus width of xLEN (AXI4: 8-bit, burst 1-256)
     parameter                       TRANS_DATA_SIZE_W   = 3,                            // Bus width of xSIZE
@@ -24,8 +22,20 @@ module axi_interconnect
     parameter                       SLV_ID_LSB_IDX      = ADDR_WIDTH - $clog2(SLV_AMT),
     parameter [SLV_AMT*ADDR_WIDTH-1:0] SLV_BASE_ADDR    = {SLV_AMT*ADDR_WIDTH{1'b0}},
     parameter [SLV_AMT*ADDR_WIDTH-1:0] SLV_ADDR_MASK    = {SLV_AMT*ADDR_WIDTH{1'b1}},
+    // T3 - do sau FIFO write-data cho TUNG slave, dong goi 32 bit mot truong,
+    // cung thu tu voi SLV_BASE_ADDR (slave 0 o bit thap nhat).  Mac dinh 32 giu
+    // nguyen hanh vi cu cho moi ban instantiate chua khai bao gi.
+    parameter [SLV_AMT*32-1:0]      SLV_W_FIFO_DEPTH    = {SLV_AMT{32'd32}},
     // Dispatcher DATA depth configuration
-    parameter                       DSP_RDATA_DEPTH     = 16
+    parameter                       DSP_RDATA_DEPTH     = 16,
+    // R4 - xem ghi chu trong axi_slave_arbitration.v, module sa_Ax_channel.
+    // Dat 0 khi moi master deu noi cung LOCK/CACHE/QOS/REGION bang hang so;
+    // khi do bon truong do khong di qua FIFO ma duoc tai tao o dau ra slave.
+    parameter                       AXI_SIDEBAND_EN     = 1,
+    parameter [0:0]                 AXI_LOCK_CONST      = 1'b0,
+    parameter [3:0]                 AXI_CACHE_CONST     = 4'b0011,
+    parameter [3:0]                 AXI_QOS_CONST       = 4'b0000,
+    parameter [3:0]                 AXI_REGION_CONST    = 4'b0000
 )
 (
     // Input declaration
@@ -262,7 +272,7 @@ module axi_interconnect
     // -- -- -- Read address channel (master)  
     wire    [SLV_AMT-1:0]                   dsp_sa_ARREADY_i        [MST_AMT-1:0];
     // -- -- -- Read data channel (master)     
-    wire    [ROB_ID_WIDTH*SLV_AMT-1:0]      dsp_sa_RID_i            [MST_AMT-1:0];
+    wire    [TRANS_MST_ID_W*SLV_AMT-1:0]    dsp_sa_RID_i            [MST_AMT-1:0];
     wire    [DATA_WIDTH*SLV_AMT-1:0]        dsp_sa_RDATA_i          [MST_AMT-1:0];
     wire    [TRANS_WR_RESP_W*SLV_AMT-1:0]   dsp_sa_RRESP_i          [MST_AMT-1:0];
     wire    [SLV_AMT-1:0]                   dsp_sa_RLAST_i          [MST_AMT-1:0];
@@ -289,7 +299,7 @@ module axi_interconnect
     // -- -- -- Write response channel         
     wire    [SLV_AMT-1:0]                   dsp_sa_BREADY_o         [MST_AMT-1:0];
     // -- -- -- Read address channel           
-    wire    [ROB_ID_WIDTH*SLV_AMT-1:0]      dsp_sa_ARID_o           [MST_AMT-1:0];
+    wire    [TRANS_MST_ID_W*SLV_AMT-1:0]    dsp_sa_ARID_o           [MST_AMT-1:0];
     wire    [ADDR_WIDTH*SLV_AMT-1:0]        dsp_sa_ARADDR_o         [MST_AMT-1:0];
     wire    [TRANS_BURST_W*SLV_AMT-1:0]     dsp_sa_ARBURST_o        [MST_AMT-1:0];
     wire    [TRANS_DATA_LEN_W*SLV_AMT-1:0]  dsp_sa_ARLEN_o          [MST_AMT-1:0];
@@ -326,7 +336,7 @@ module axi_interconnect
     // -- -- -- Write response channel
     wire    [MST_AMT-1:0]                   sa_dsp_BREADY_i         [SLV_AMT-1:0];
     // -- -- -- Read address channel
-    wire    [ROB_ID_WIDTH*MST_AMT-1:0]      sa_dsp_ARID_i           [SLV_AMT-1:0];
+    wire    [TRANS_MST_ID_W*MST_AMT-1:0]    sa_dsp_ARID_i           [SLV_AMT-1:0];
     wire    [ADDR_WIDTH*MST_AMT-1:0]        sa_dsp_ARADDR_i         [SLV_AMT-1:0];
     wire    [TRANS_BURST_W*MST_AMT-1:0]     sa_dsp_ARBURST_i        [SLV_AMT-1:0];
     wire    [TRANS_DATA_LEN_W*MST_AMT-1:0]  sa_dsp_ARLEN_i          [SLV_AMT-1:0];
@@ -352,7 +362,7 @@ module axi_interconnect
     // -- -- -- Read address channel (master)   
     wire    [MST_AMT-1:0]                   sa_dsp_ARREADY_o        [SLV_AMT-1:0];
     // -- -- -- Read data channel (master)      
-    wire    [ROB_ID_WIDTH*MST_AMT-1:0]      sa_dsp_RID_o            [SLV_AMT-1:0];
+    wire    [TRANS_MST_ID_W*MST_AMT-1:0]    sa_dsp_RID_o            [SLV_AMT-1:0];
     wire    [DATA_WIDTH*MST_AMT-1:0]        sa_dsp_RDATA_o          [SLV_AMT-1:0];
     wire    [TRANS_WR_RESP_W*MST_AMT-1:0]   sa_dsp_RRESP_o          [SLV_AMT-1:0];
     wire    [MST_AMT-1:0]                   sa_dsp_RLAST_o          [SLV_AMT-1:0];
@@ -485,7 +495,7 @@ module axi_interconnect
             assign dsp_sa_BRESP_i[mst_idx][TRANS_WR_RESP_W*(slv_idx+1)-1-:TRANS_WR_RESP_W]      = sa_dsp_BRESP_o[slv_idx][TRANS_WR_RESP_W*(mst_idx+1)-1-:TRANS_WR_RESP_W];
             assign dsp_sa_BVALID_i[mst_idx][slv_idx]                                            = sa_dsp_BVALID_o[slv_idx][mst_idx];
             assign dsp_sa_ARREADY_i[mst_idx][slv_idx]                                           = sa_dsp_ARREADY_o[slv_idx][mst_idx];
-            assign dsp_sa_RID_i[mst_idx][ROB_ID_WIDTH*(slv_idx+1)-1-:ROB_ID_WIDTH]              = sa_dsp_RID_o[slv_idx][ROB_ID_WIDTH*(mst_idx+1)-1-:ROB_ID_WIDTH];
+            assign dsp_sa_RID_i[mst_idx][TRANS_MST_ID_W*(slv_idx+1)-1-:TRANS_MST_ID_W]              = sa_dsp_RID_o[slv_idx][TRANS_MST_ID_W*(mst_idx+1)-1-:TRANS_MST_ID_W];
             assign dsp_sa_RDATA_i[mst_idx][DATA_WIDTH*(slv_idx+1)-1-:DATA_WIDTH]                = sa_dsp_RDATA_o[slv_idx][DATA_WIDTH*(mst_idx+1)-1-:DATA_WIDTH];
             assign dsp_sa_RRESP_i[mst_idx][TRANS_WR_RESP_W*(slv_idx+1)-1-:TRANS_WR_RESP_W]      = sa_dsp_RRESP_o[slv_idx][TRANS_WR_RESP_W*(mst_idx+1)-1-:TRANS_WR_RESP_W];
             assign dsp_sa_RLAST_i[mst_idx][slv_idx]                                             = sa_dsp_RLAST_o[slv_idx][mst_idx];
@@ -508,7 +518,7 @@ module axi_interconnect
             assign sa_dsp_WLAST_i[slv_idx][mst_idx]                                             = dsp_sa_WLAST_o[mst_idx][slv_idx];
             assign sa_dsp_WVALID_i[slv_idx][mst_idx]                                            = dsp_sa_WVALID_o[mst_idx][slv_idx];
             assign sa_dsp_BREADY_i[slv_idx][mst_idx]                                            = dsp_sa_BREADY_o[mst_idx][slv_idx];
-            assign sa_dsp_ARID_i[slv_idx][ROB_ID_WIDTH*(mst_idx+1)-1-:ROB_ID_WIDTH]             = dsp_sa_ARID_o[mst_idx][ROB_ID_WIDTH*(slv_idx+1)-1-:ROB_ID_WIDTH];
+            assign sa_dsp_ARID_i[slv_idx][TRANS_MST_ID_W*(mst_idx+1)-1-:TRANS_MST_ID_W]             = dsp_sa_ARID_o[mst_idx][TRANS_MST_ID_W*(slv_idx+1)-1-:TRANS_MST_ID_W];
             assign sa_dsp_ARADDR_i[slv_idx][ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH]               = dsp_sa_ARADDR_o[mst_idx][ADDR_WIDTH*(slv_idx+1)-1-:ADDR_WIDTH];
             assign sa_dsp_ARBURST_i[slv_idx][TRANS_BURST_W*(mst_idx+1)-1-:TRANS_BURST_W]        = dsp_sa_ARBURST_o[mst_idx][TRANS_BURST_W*(slv_idx+1)-1-:TRANS_BURST_W];
             assign sa_dsp_ARLEN_i[slv_idx][TRANS_DATA_LEN_W*(mst_idx+1)-1-:TRANS_DATA_LEN_W]    = dsp_sa_ARLEN_o[mst_idx][TRANS_DATA_LEN_W*(slv_idx+1)-1-:TRANS_DATA_LEN_W];
@@ -534,8 +544,6 @@ module axi_interconnect
                 .DATA_WIDTH(DATA_WIDTH),
                 .ADDR_WIDTH(ADDR_WIDTH),
                 .TRANS_MST_ID_W(TRANS_MST_ID_W),
-                .ROB_TAG_W(ROB_TAG_W),
-                .ROB_ID_WIDTH(ROB_ID_WIDTH),
                 .TRANS_BURST_W(TRANS_BURST_W),
                 .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W),
                 .TRANS_DATA_SIZE_W(TRANS_DATA_SIZE_W),
@@ -634,6 +642,11 @@ module axi_interconnect
         for(slv_idx = 0; slv_idx < SLV_AMT; slv_idx = slv_idx + 1) begin : SA_GEN
             if(MST_AMT > 1) begin   // Multiple masters -> Need arbitrate between masters
                 ai_slave_arbitration #(
+                    .AXI_SIDEBAND_EN(AXI_SIDEBAND_EN),
+                    .AXI_LOCK_CONST(AXI_LOCK_CONST),
+                    .AXI_CACHE_CONST(AXI_CACHE_CONST),
+                    .AXI_QOS_CONST(AXI_QOS_CONST),
+                    .AXI_REGION_CONST(AXI_REGION_CONST),
                     .MST_AMT(MST_AMT),
                     .OUTSTANDING_AMT(OUTSTANDING_AMT),
                     .MST_WEIGHT(MST_WEIGHT),
@@ -641,8 +654,6 @@ module axi_interconnect
                     .DATA_WIDTH(DATA_WIDTH),
                     .ADDR_WIDTH(ADDR_WIDTH),
                     .TRANS_MST_ID_W(TRANS_MST_ID_W),
-                    .ROB_TAG_W(ROB_TAG_W),
-                    .ROB_ID_WIDTH(ROB_ID_WIDTH),
                     .TRANS_SLV_ID_W(TRANS_SLV_ID_W),
                     .TRANS_BURST_W(TRANS_BURST_W),
                     .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W),
@@ -650,7 +661,8 @@ module axi_interconnect
                     .TRANS_WR_RESP_W(TRANS_WR_RESP_W),
                     .SLV_ID(slv_idx),
                     .SLV_ID_MSB_IDX(SLV_ID_MSB_IDX),
-                    .SLV_ID_LSB_IDX(SLV_ID_LSB_IDX)
+                    .SLV_ID_LSB_IDX(SLV_ID_LSB_IDX),
+                    .W_FIFO_DEPTH(SLV_W_FIFO_DEPTH[slv_idx*32 +: 32])
                 ) slave_arbitration (
                     .ACLK_i(ACLK_i),
                     .ARESETn_i(ARESETn_i),

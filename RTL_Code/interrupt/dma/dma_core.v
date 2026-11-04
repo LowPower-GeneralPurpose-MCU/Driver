@@ -122,7 +122,7 @@ module dma_channel #(
 
    // localparam
    localparam BYTES_PER_BEAT = `AXI_BYTES;     // = 4 cho 32-bit
-    function integer clog2_fn;
+    function automatic integer clog2_fn;
         input integer v;
         integer i;
         begin
@@ -208,6 +208,45 @@ module dma_channel #(
         ? {LEN_W{1'b0}}
         : wr_burst_bytes[BURST_W-1:BEAT_BITS] - 1'b1;
 
+    // -------------------------------------------------------------------------
+    // Dia chi / so byte con lai KE TIEP - tinh theo ung vien, chon sau.
+    //
+    // Ban cu viet `rd_addr + rd_burst_bytes`: bo cong 32 bit phai CHO ca chuoi
+    // chon burst (kep ch_bmax -> min(remain, cap) -> min(4K room, ...)) xong
+    // moi bat dau. Genus 2026-09-11 o 4 ns: ch_bmax -> rd_addr[31] la duong
+    // gang nhat chip (3761 ps, slack 3 ps SS), va RTLOPT-55 khien bo cong
+    // khong duoc tong hop lai thanh bo cong nhanh.
+    //
+    // rd_burst_bytes luon la MOT trong ba gia tri - 4K room, remain, cap - va
+    // ca ba deu < 2^BURST_W khi duoc chon (room/remain chi thang khi nho hon
+    // cap). Nen cong CA BA song song voi chuoi so sanh, roi dung chinh ket qua
+    // so sanh de chon: bo cong ra khoi duong noi tiep. Ket qua giong het ban
+    // cu o moi chu ky. Truong hop 4K: addr + (4096 - addr[11:0]) chinh la
+    // {addr[31:12] + 1, 12'h000} - chi mot bo tang 20 bit.
+    // -------------------------------------------------------------------------
+    wire rd_sel_4k  = (rd_4k_room_ext < rd_burst_rem_cap);
+    wire rd_sel_rem = (rd_remain_ext  < burst_cap_ext);
+    wire wr_sel_4k  = (wr_4k_room_ext < wr_burst_rem_cap);
+    wire wr_sel_rem = (wr_remain_ext  < burst_cap_ext);
+
+    wire [ADDR_W-1:0] rd_addr_nxt =
+        rd_sel_4k  ? {rd_addr[ADDR_W-1:12] + 1'b1, 12'h000} :
+        rd_sel_rem ? rd_addr + {{(ADDR_W-BURST_W){1'b0}}, rd_remain[BURST_W-1:0]} :
+                     rd_addr + {{(ADDR_W-BURST_W){1'b0}}, burst_cap_bytes};
+    wire [ADDR_W-1:0] wr_addr_nxt =
+        wr_sel_4k  ? {wr_addr[ADDR_W-1:12] + 1'b1, 12'h000} :
+        wr_sel_rem ? wr_addr + {{(ADDR_W-BURST_W){1'b0}}, wr_remain[BURST_W-1:0]} :
+                     wr_addr + {{(ADDR_W-BURST_W){1'b0}}, burst_cap_bytes};
+
+    wire [LEN_FIELD_W-1:0] rd_remain_nxt =
+        rd_sel_4k  ? rd_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, rd_4k_room_ext[BURST_W-1:0]} :
+        rd_sel_rem ? {LEN_FIELD_W{1'b0}} :
+                     rd_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, burst_cap_bytes};
+    wire [LEN_FIELD_W-1:0] wr_remain_nxt =
+        wr_sel_4k  ? wr_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, wr_4k_room_ext[BURST_W-1:0]} :
+        wr_sel_rem ? {LEN_FIELD_W{1'b0}} :
+                     wr_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, burst_cap_bytes};
+
    // Outstanding command counters
    reg [OUT_W-1:0] rd_outs, wr_outs;
 
@@ -220,7 +259,10 @@ module dma_channel #(
                     (wr_outs >= cfg_wr_out_max);
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n || (state == ST_IDLE)) begin
+        if (!rst_n) begin
+            rd_outs <= {OUT_W{1'b0}};
+            wr_outs <= {OUT_W{1'b0}};
+        end else if (state == ST_IDLE) begin
             rd_outs <= {OUT_W{1'b0}};
             wr_outs <= {OUT_W{1'b0}};
         end else begin
@@ -319,7 +361,33 @@ module dma_channel #(
         rd_burst_len_ext + {{(CMP_W-1){1'b0}}, 1'b1};
     wire [CMP_W-1:0] wr_beats_needed =
         wr_burst_len_ext + {{(CMP_W-1){1'b0}}, 1'b1};
-    wire fifo_has_room   = (fifo_free_ext >= rd_beats_needed);
+    // -------------------------------------------------------------------------
+    // Giu cho FIFO cho moi burst doc DA PHAT nhung chua ve.
+    //
+    // Ban cu: fifo_has_room = (fifo_free >= rd_beats_needed) - chi nhin so o
+    // trong LUC NAY, bo qua cac burst dang bay. Voi cfg_tokens = 4 va burst 16
+    // beat, kenh co the phat 4 x 16 = 64 beat vao FIFO 16 o. Beat thua lam
+    // rd_dat_ready (= ~fifo_full) ha giua burst, tuc DMA ep nguoc RREADY len
+    // slave. Truoc 2026-09-11 ROB trong axi_interconnect hut het so beat do nen
+    // khong ai thay; nay kenh doc khong con ROB, RREADY ha se giu slave va chan
+    // moi master khac doc cung slave (dieu kien 3 o dsp_read_channel).
+    //
+    // rd_inflight = so beat da giu cho ma chua ghi vao FIFO: +len+1 khi phat
+    // AR, -1 moi beat vao FIFO. Nho vay count + rd_inflight <= FIFO_DEPTH, va
+    // FIFO KHONG BAO GIO day khi beat toi.
+    // -------------------------------------------------------------------------
+    reg  [CMP_W-1:0] rd_inflight;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            rd_inflight <= {CMP_W{1'b0}};
+        else if (state == ST_IDLE)
+            rd_inflight <= {CMP_W{1'b0}};
+        else
+            rd_inflight <= rd_inflight
+                         + (rd_cmd_fire ? rd_beats_needed : {CMP_W{1'b0}})
+                         - {{(CMP_W-1){1'b0}}, (fifo_wr_en & (rd_inflight != {CMP_W{1'b0}}))};
+    end
+    wire fifo_has_room   = ({1'b0, fifo_free_ext} >= ({1'b0, rd_inflight} + {1'b0, rd_beats_needed}));
     wire fifo_has_enough = (fifo_count_ext >= wr_beats_needed);
     wire rd_rsp_error = rd_rsp_valid & (rd_rsp_err != `AXI_RESP_OKAY);
     wire wr_rsp_error = wr_rsp_valid & (wr_rsp_err != `AXI_RESP_OKAY);
@@ -353,13 +421,13 @@ module dma_channel #(
                     // Cập nhật address / remaining
                     if (rd_cmd_fire) begin
                         if (cfg_src_incr)
-                            rd_addr <= rd_addr + {{(ADDR_W-BURST_W){1'b0}}, rd_burst_bytes};
-                        rd_remain <= rd_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, rd_burst_bytes};
+                            rd_addr <= rd_addr_nxt;
+                        rd_remain <= rd_remain_nxt;
                     end
                     if (wr_cmd_fire) begin
                         if (cfg_dst_incr)
-                            wr_addr <= wr_addr + {{(ADDR_W-BURST_W){1'b0}}, wr_burst_bytes};
-                        wr_remain <= wr_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, wr_burst_bytes};
+                            wr_addr <= wr_addr_nxt;
+                        wr_remain <= wr_remain_nxt;
                     end
 
                     // Thu thập lỗi
@@ -384,8 +452,8 @@ module dma_channel #(
                 ST_DRAIN: begin
                     if (wr_cmd_fire) begin
                         if (cfg_dst_incr)
-                            wr_addr <= wr_addr + {{(ADDR_W-BURST_W){1'b0}}, wr_burst_bytes};
-                        wr_remain <= wr_remain - {{(LEN_FIELD_W-BURST_W){1'b0}}, wr_burst_bytes};
+                            wr_addr <= wr_addr_nxt;
+                        wr_remain <= wr_remain_nxt;
                     end
                     if (rd_rsp_error)
                         err <= (rd_rsp_err == `AXI_RESP_SLVERR)
@@ -423,7 +491,8 @@ module dma_channel #(
 
     reg [SEQ_W-1:0] rd_id_cnt;   // burst sequence counter (SEQ_W bits only)
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n || state == ST_IDLE) rd_id_cnt <= {SEQ_W{1'b0}};
+        if (!rst_n) rd_id_cnt <= {SEQ_W{1'b0}};
+        else if (state == ST_IDLE) rd_id_cnt <= {SEQ_W{1'b0}};
         else if (rd_cmd_fire) rd_id_cnt <= rd_id_cnt + 1'b1;
     end
 
@@ -444,7 +513,8 @@ module dma_channel #(
     // Chờ FIFO đủ data cho 1 burst trước khi phát AW
    reg [SEQ_W-1:0] wr_id_cnt;
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n || state == ST_IDLE) wr_id_cnt <= {SEQ_W{1'b0}};
+        if (!rst_n) wr_id_cnt <= {SEQ_W{1'b0}};
+        else if (state == ST_IDLE) wr_id_cnt <= {SEQ_W{1'b0}};
         else if (wr_cmd_fire) wr_id_cnt <= wr_id_cnt + 1'b1;
     end
 
@@ -621,7 +691,7 @@ module dma_engine #(
 
     // localparam & function
     // function phải khai báo TRƯỚC localparam dùng nó (Verilog-2001)
-    function integer clog2_fn;
+    function automatic integer clog2_fn;
         input integer v;
         integer i;
         begin
@@ -681,7 +751,7 @@ module dma_engine #(
         else if (apb_wr & is_global & apb_pwdata[0]) soft_rst_r <= 1'b1;
         else soft_rst_r <= 1'b0;   // auto-clear after 1 cycle
     end
-    // Combine với hard rst_n: nếu một trong hai active → reset kênh
+    // Combine với hard rst_n: nếu một trong hai active -> reset kênh
     wire ch_rst_n = rst_n & ~soft_rst_r;
     always @(posedge clk or negedge rst_n) begin
         apb_pready <= !rst_n ? 1'b0 : (apb_psel & apb_penable);
@@ -691,24 +761,28 @@ module dma_engine #(
     // APB write
     integer n;
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n || soft_rst_r) begin
-            // Hard reset OR soft reset: clear all channel control registers
+        if (!rst_n) begin
+            // Hard reset: clear channel status/control and configuration.
             for (n = 0; n < N_CH; n = n + 1) begin
                 ch_start_r[n] <= 1'b0;
                 ch_int_st[n]  <= 2'b00;
             end
-            // On hard reset only: also clear config registers
-            if (!rst_n) begin
-                for (n = 0; n < N_CH; n = n + 1) begin
-                    ch_src[n]    <= {ADDR_W{1'b0}};
-                    ch_dst[n]    <= {ADDR_W{1'b0}};
-                    ch_len[n]    <= {LEN_FIELD_W{1'b0}};
-                    ch_bmax[n]   <= MAX_BURST[BURST_W-1:0];
-                    ch_si[n]     <= 1'b1;
-                    ch_di[n]     <= 1'b1;
-                    ch_pnum[n]   <= {PERIPH_NUM_W{1'b0}};
-                    ch_int_en[n] <= 1'b1;
-                end
+            for (n = 0; n < N_CH; n = n + 1) begin
+                ch_src[n]    <= {ADDR_W{1'b0}};
+                ch_dst[n]    <= {ADDR_W{1'b0}};
+                ch_len[n]    <= {LEN_FIELD_W{1'b0}};
+                ch_bmax[n]   <= MAX_BURST[BURST_W-1:0];
+                ch_si[n]     <= 1'b1;
+                ch_di[n]     <= 1'b1;
+                ch_pnum[n]   <= {PERIPH_NUM_W{1'b0}};
+                ch_int_en[n] <= 1'b1;
+            end
+        end else if (soft_rst_r) begin
+            // Soft reset is synchronous in this block; Genus rejects using it
+            // in the async reset condition because it is not an edge control.
+            for (n = 0; n < N_CH; n = n + 1) begin
+                ch_start_r[n] <= 1'b0;
+                ch_int_st[n]  <= 2'b00;
             end
         end else begin
             // Clear start pulses mỗi cycle
@@ -754,8 +828,8 @@ module dma_engine #(
         end else if (apb_rd) begin
             if (is_ch_reg) begin
                 case (reg_off)
-                    `REG_SRC_ADDR: apb_prdata <= {{(32-ADDR_W){1'b0}}, ch_src[ch_idx]};
-                    `REG_DST_ADDR: apb_prdata <= {{(32-ADDR_W){1'b0}}, ch_dst[ch_idx]};
+                    `REG_SRC_ADDR: apb_prdata <= ch_src[ch_idx];
+                    `REG_DST_ADDR: apb_prdata <= ch_dst[ch_idx];
                     `REG_LEN:      apb_prdata <= {{(32-LEN_FIELD_W){1'b0}}, ch_len[ch_idx]};
                     `REG_CTRL:     apb_prdata <= {
                                     {(32-PERIPH_NUM_W-CTRL_PNUM_LSB){1'b0}},

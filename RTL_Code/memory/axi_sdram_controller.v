@@ -6,7 +6,7 @@ module axi_sdram_controller #(
     // ==========================================
     parameter ADDR_WIDTH            = 32,
     parameter DATA_WIDTH            = 32,
-    parameter ID_WIDTH              = 7,
+    parameter ID_WIDTH              = 5,
     
     // ==========================================
     // THAM SỐ CẤU HÌNH SDRAM (Ví dụ cho chip 32-bit data)
@@ -139,7 +139,7 @@ module axi_sdram_controller #(
     // Đọc dữ liệu từ cổng input
     wire [SDRAM_DATA_WIDTH-1:0] dq_in_wire = sdram_dq_i;
 
-    function [SDRAM_DATA_WIDTH-1:0] axi_to_phy_word;
+    function automatic [SDRAM_DATA_WIDTH-1:0] axi_to_phy_word;
         input [DATA_WIDTH-1:0] axi_data;
         input                  upper_half;
         integer                bit_idx;
@@ -154,7 +154,7 @@ module axi_sdram_controller #(
         end
     endfunction
 
-    function [PHY_STRB_WIDTH-1:0] axi_to_phy_strb;
+    function automatic [PHY_STRB_WIDTH-1:0] axi_to_phy_strb;
         input [AXI_STRB_WIDTH-1:0] axi_strb;
         input                      upper_half;
         integer                    byte_idx;
@@ -169,7 +169,7 @@ module axi_sdram_controller #(
         end
     endfunction
 
-    function [DATA_WIDTH-1:0] merge_phy_read;
+    function automatic [DATA_WIDTH-1:0] merge_phy_read;
         input [DATA_WIDTH-1:0]        old_data;
         input [SDRAM_DATA_WIDTH-1:0]  phy_data;
         input                         upper_half;

@@ -12,26 +12,16 @@ module rob_onehot_mux #(
 )(
     input  wire [N*W-1:0] din,   // flattened: phần tử i tại din[i*W +: W]
     input  wire [N-1:0]   sel,   // one-hot select
-    output wire [W-1:0]   dout
+    output reg  [W-1:0]   dout
 );
-    // Mỗi masked[i] = 0 nếu ~sel[i], = din[i] nếu sel[i]
-    wire [W-1:0] masked [0:N-1];
-    genvar g;
-    generate
-        for (g = 0; g < N; g = g + 1) begin : gen_mask
-            assign masked[g] = {W{sel[g]}} & din[g*W +: W];
-        end
-    endgenerate
-
-    // OR-tree (synthesizer tự flatten thành cây)
-    wire [W-1:0] tree [0:N-1];
-    generate
-        assign tree[0] = masked[0];
-        for (g = 1; g < N; g = g + 1) begin : gen_or
-            assign tree[g] = tree[g-1] | masked[g];
-        end
-    endgenerate
-    assign dout = tree[N-1];
+    // A single reduction loop avoids a self-referencing unpacked array.
+    // Synthesis is free to rebalance the associative OR expression.
+    integer mux_i;
+    always @(*) begin
+        dout = {W{1'b0}};
+        for (mux_i = 0; mux_i < N; mux_i = mux_i + 1)
+            dout = dout | ({W{sel[mux_i]}} & din[mux_i*W +: W]);
+    end
 endmodule
 
 module oh2bin #(
@@ -39,21 +29,15 @@ module oh2bin #(
     parameter W = 3
 )(
     input  wire [N-1:0] oh,
-    output wire [W-1:0] bin
+    output reg  [W-1:0] bin
 );
-    wire [W-1:0] tmp  [0:N-1];
-    wire [W-1:0] tree [0:N-1];
-    genvar g;
-    generate
-        for (g = 0; g < N; g = g + 1) begin : gen_enc
-            assign tmp[g] = {W{oh[g]}} & g[W-1:0];
-        end
-        assign tree[0] = tmp[0];
-        for (g = 1; g < N; g = g + 1) begin : gen_or
-            assign tree[g] = tree[g-1] | tmp[g];
-        end
-    endgenerate
-    assign bin = tree[N-1];
+    integer enc_i;
+    always @(*) begin
+        bin = {W{1'b0}};
+        for (enc_i = 0; enc_i < N; enc_i = enc_i + 1)
+            if (oh[enc_i])
+                bin = bin | enc_i[W-1:0];
+    end
 endmodule
 
 
@@ -181,7 +165,9 @@ module axi_read_reorder_buffer_core #(
     reg [BEAT_CNT_W*ROB_DEPTH-1:0]      entry_recv_flat_q;
 
     // BRAM beat memory (reset-insensitive process để tool suy ra BRAM)
+`ifdef FPGA
     (* ram_style = "block" *)
+`endif
     reg [DATA_WIDTH+RESP_WIDTH-1:0]      beat_mem_q [0:ROB_DEPTH*MAX_BURST_BEATS-1];
 
     // Per-ID order tracking: linked ROB entries instead of ID_COUNT*ROB_DEPTH queues.
@@ -215,7 +201,7 @@ module axi_read_reorder_buffer_core #(
     // ------------------------------------------------------------------ //
     // Helper functions (giữ nguyên cho các phép tính đơn-entry)
     // ------------------------------------------------------------------ //
-    function [ROB_TAG_W-1:0] rob_tag_inc;
+    function automatic [ROB_TAG_W-1:0] rob_tag_inc;
         input [ROB_TAG_W-1:0] tag;
         begin
             if (tag == ROB_DEPTH - 1) rob_tag_inc = {ROB_TAG_W{1'b0}};
@@ -223,7 +209,7 @@ module axi_read_reorder_buffer_core #(
         end
     endfunction
 
-    function integer rob_mem_idx;
+    function automatic integer rob_mem_idx;
         input [ROB_TAG_W-1:0]  tag;
         input [BEAT_CNT_W-1:0] beat;
         begin rob_mem_idx = (tag * MAX_BURST_BEATS) + beat; end
@@ -644,7 +630,7 @@ module axi_read_reorder_buffer #(
     integer scan_s_int;
     integer rid_base_int;
 
-    function [SLV_PTR_W-1:0] slv_ptr_inc;
+    function automatic [SLV_PTR_W-1:0] slv_ptr_inc;
         input [SLV_PTR_W-1:0] ptr;
         begin
             if (ptr == (SLV_AMT - 1))

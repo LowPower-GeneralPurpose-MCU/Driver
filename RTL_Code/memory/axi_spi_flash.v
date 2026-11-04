@@ -3,7 +3,7 @@
 module axi_spi_flash #(
     parameter ADDR_WIDTH          = 32,
     parameter DATA_WIDTH          = 32,
-    parameter ID_WIDTH            = 7,
+    parameter ID_WIDTH            = 5,
     parameter ADDR_MASK           = 32'h00FF_FFFF, // Thêm lại Mask
     parameter SPI_CLK_DIVIDER     = 2,       
     parameter FLASH_FAST_READ_CMD = 8'h0B,   
@@ -153,6 +153,17 @@ module axi_spi_flash #(
     reg [2:0]  r_state;
     reg [31:0] shift_out_reg;
     reg [31:0] shift_in_reg;
+
+`ifndef SYNTHESIS
+    // Chi mo phong: dien tro keo len tren MISO cua board.  Boot ROM
+    // (memory/boot.mem) doc header o 0x3000_0000 ngay sau reset; testbench
+    // khong co model flash de chan nay tha noi (Z) thi ca word thanh X va lan vao
+    // nhanh `bne` cua ROM.  Doc ra 1 thi header la 0xFFFF_FFFF - dung nhu flash
+    // trong / vang mat tren board - va ROM di vao `park` mot cach tat dinh.
+    wire spi_io1_s = (spi_io1_i === 1'b0) ? 1'b0 : 1'b1;
+`else
+    wire spi_io1_s = spi_io1_i;
+`endif
     reg [7:0]  bit_counter;
     reg [7:0]  burst_length_reg;
     reg [7:0]  burst_counter;
@@ -235,7 +246,7 @@ module axi_spi_flash #(
 
                 R_READ_DATA: begin
                     if (spi_clk_rising_edge) begin
-                        shift_in_reg <= {shift_in_reg[30:0], spi_io1_i};
+                        shift_in_reg <= {shift_in_reg[30:0], spi_io1_s};
                         bit_counter  <= bit_counter - 1'b1;
                         
                         if (bit_counter == 8'd1) begin

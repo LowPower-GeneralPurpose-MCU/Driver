@@ -1,11 +1,16 @@
 `timescale 1ns / 1ps
 
+// Boot ROM = MASK ROM that: bang case tong hop thanh logic chuan, noi dung chot
+// luc tong hop tu boot.mem (genus.tcl sinh memory/boot_rom_image.vh).  Khong
+// dung macro SRAM: ASAP7 khong co ROM compiler va macro SRAM la X luc cap
+// nguon, nen ma dau tien CPU chay phai nam trong logic.  Xem
+// MEMORY_ARCHITECTURE.md muc 6 cho luong boot va dinh dang header anh flash.
 module axi_rom #(
     parameter ADDR_WIDTH        = 32,
     parameter DATA_WIDTH        = 32,
     parameter ID_WIDTH          = 7,
-    parameter ADDR_MASK         = 32'h0000_3FFF, // Mask 16KB
-    parameter MEM_DEPTH         = 4096,          // 16KB / 4 = 4096 Words
+    parameter ADDR_MASK         = 32'h0000_7FFF, // Mask 32KB
+    parameter MEM_DEPTH         = 8192,          // 32KB / 4 = 8192 Words
     parameter INIT_FILE         = "boot.mem"     // File chứa mã máy
 )(
     input  wire                     clk,
@@ -59,25 +64,30 @@ module axi_rom #(
 );
 
     // =========================================================
-    // PHẦN BỘ NHỚ (BLOCK ROM) - CHỈ CÓ CỔNG ĐỌC
+    // PHẦN BỘ NHỚ ROM TỔNG HỢP ĐƯỢC - CHỈ CÓ CỔNG ĐỌC
     // =========================================================
-    (* rom_style = "block" *) reg [DATA_WIDTH-1:0] rom_memory [0:MEM_DEPTH-1];
     reg [DATA_WIDTH-1:0] rdata_out;
 
     wire                  bram_re;
     wire [ADDR_WIDTH-1:0] bram_raddr;
 
-    // Khởi tạo bộ nhớ ROM từ file
-    initial begin
-        if (INIT_FILE != "") begin
-            $readmemh(INIT_FILE, rom_memory);
+    // genus.tcl converts INIT_FILE to this case table before read_hdl.  A case
+    // ROM is synthesizable in an ASIC flow, unlike initial/$readmemh, which
+    // Genus ignores and would otherwise leave the entire boot ROM undriven.
+    function automatic [DATA_WIDTH-1:0] rom_lookup;
+        input [ADDR_WIDTH-1:0] address;
+        begin
+            case (address)
+`include "memory/boot_rom_image.vh"
+                default: rom_lookup = {DATA_WIDTH{1'b0}};
+            endcase
         end
-    end
+    endfunction
 
     // Tiến trình Đọc đồng bộ (Không Reset)
     always @(posedge clk) begin
         if (bram_re) begin
-            rdata_out <= rom_memory[bram_raddr];
+            rdata_out <= rom_lookup(bram_raddr);
         end
     end
 
@@ -91,7 +101,7 @@ module axi_rom #(
     localparam W_IDLE = 2'd0, W_SINK = 2'd1, W_RESP = 2'd2;
     reg [1:0] w_state;
 
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             w_state       <= W_IDLE;
             s_axi_awready <= 1'b0;
@@ -140,7 +150,7 @@ module axi_rom #(
     reg [2:0]            ar_size_reg;
     reg [7:0]            r_count;
 
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             r_state       <= R_IDLE;
             s_axi_arready <= 1'b0;

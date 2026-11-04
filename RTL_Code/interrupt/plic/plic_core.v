@@ -131,43 +131,93 @@ module plic_core #(
         // OPTION 3: BINARY TREE (Cây đấu loại)
         // ==========================================
         else if (ALGORITHM == "BINARY_TREE") begin : gen_tree
-            // Giả định hệ thống có tối đa 32 ngắt (Cây nhị phân 32 lá -> 64 Node)
-            localparam LEAVES = 32; 
-            localparam NODES  = 2 * LEAVES;
-            
-            wire [`PLIC_PRIO_WIDTH-1:0] tree_prio [0:NODES-1];
-            wire [31:0]                 tree_id   [0:NODES-1];
-            
+            // Fixed five-stage 32-leaf tree. Separate arrays per stage make
+            // the acyclic structure explicit to both lint and synthesis.
+            wire [`PLIC_PRIO_WIDTH-1:0] leaf_prio [0:31];
+            wire [31:0]                 leaf_id   [0:31];
+            wire [`PLIC_PRIO_WIDTH-1:0] level1_prio [0:15];
+            wire [31:0]                 level1_id   [0:15];
+            wire [`PLIC_PRIO_WIDTH-1:0] level2_prio [0:7];
+            wire [31:0]                 level2_id   [0:7];
+            wire [`PLIC_PRIO_WIDTH-1:0] level3_prio [0:3];
+            wire [31:0]                 level3_id   [0:3];
+            wire [`PLIC_PRIO_WIDTH-1:0] level4_prio [0:1];
+            wire [31:0]                 level4_id   [0:1];
+
             genvar n;
-            // 1. Nạp dữ liệu vào 32 chiếc Lá (Leaves) ở nửa sau của mảng
-            for (n = 0; n < LEAVES; n = n + 1) begin : gen_leaves
+            for (n = 0; n < 32; n = n + 1) begin : gen_leaves
                 if (n > 0 && n < `PLIC_NUM_SRC) begin
-                    assign tree_prio[LEAVES + n] = (ip_q[n] && ie_i[n]) ? prio_i[n] : 0;
-                    assign tree_id[LEAVES + n]   = (ip_q[n] && ie_i[n]) ? n : 0;
+                    assign leaf_prio[n] =
+                        (ip_q[n] && ie_i[n]) ? prio_i[n] : 0;
+                    assign leaf_id[n] =
+                        (ip_q[n] && ie_i[n]) ? n : 0;
                 end else begin
-                    assign tree_prio[LEAVES + n] = 0;
-                    assign tree_id[LEAVES + n]   = 0;
+                    assign leaf_prio[n] = 0;
+                    assign leaf_id[n]   = 0;
                 end
             end
-            
-            // 2. Xây dựng cây đấu loại từ dưới lên (Node 31 về Node 1)
-            for (n = LEAVES-1; n > 0; n = n - 1) begin : gen_nodes
-                wire [`PLIC_PRIO_WIDTH-1:0] p_l = tree_prio[2*n];     // Nhánh trái
-                wire [`PLIC_PRIO_WIDTH-1:0] p_r = tree_prio[2*n + 1]; // Nhánh phải
-                wire [31:0]                 id_l = tree_id[2*n];
-                wire [31:0]                 id_r = tree_id[2*n + 1];
-                
-                // Trái thắng nếu: Ưu tiên trái cao hơn, HOẶC hòa nhưng ID trái nhỏ hơn (và khác 0)
-                wire left_wins = (p_l > p_r) || 
-                                 ((p_l == p_r) && (id_l != 0) && ((id_r == 0) || (id_l < id_r)));
-                
-                assign tree_prio[n] = left_wins ? p_l : p_r;
-                assign tree_id[n]   = left_wins ? id_l : id_r;
+
+            for (n = 0; n < 16; n = n + 1) begin : gen_level1
+                wire left_wins =
+                    (leaf_prio[2*n] > leaf_prio[2*n + 1]) ||
+                    ((leaf_prio[2*n] == leaf_prio[2*n + 1]) &&
+                     (leaf_id[2*n] != 0) &&
+                     ((leaf_id[2*n + 1] == 0) ||
+                      (leaf_id[2*n] < leaf_id[2*n + 1])));
+                assign level1_prio[n] =
+                    left_wins ? leaf_prio[2*n] : leaf_prio[2*n + 1];
+                assign level1_id[n] =
+                    left_wins ? leaf_id[2*n] : leaf_id[2*n + 1];
             end
-            
-            // 3. Quán quân nằm ở Node 1 (Root)
-            assign max_prio = tree_prio[1];
-            assign best_id  = tree_id[1];
+
+            for (n = 0; n < 8; n = n + 1) begin : gen_level2
+                wire left_wins =
+                    (level1_prio[2*n] > level1_prio[2*n + 1]) ||
+                    ((level1_prio[2*n] == level1_prio[2*n + 1]) &&
+                     (level1_id[2*n] != 0) &&
+                     ((level1_id[2*n + 1] == 0) ||
+                      (level1_id[2*n] < level1_id[2*n + 1])));
+                assign level2_prio[n] =
+                    left_wins ? level1_prio[2*n] : level1_prio[2*n + 1];
+                assign level2_id[n] =
+                    left_wins ? level1_id[2*n] : level1_id[2*n + 1];
+            end
+
+            for (n = 0; n < 4; n = n + 1) begin : gen_level3
+                wire left_wins =
+                    (level2_prio[2*n] > level2_prio[2*n + 1]) ||
+                    ((level2_prio[2*n] == level2_prio[2*n + 1]) &&
+                     (level2_id[2*n] != 0) &&
+                     ((level2_id[2*n + 1] == 0) ||
+                      (level2_id[2*n] < level2_id[2*n + 1])));
+                assign level3_prio[n] =
+                    left_wins ? level2_prio[2*n] : level2_prio[2*n + 1];
+                assign level3_id[n] =
+                    left_wins ? level2_id[2*n] : level2_id[2*n + 1];
+            end
+
+            for (n = 0; n < 2; n = n + 1) begin : gen_level4
+                wire left_wins =
+                    (level3_prio[2*n] > level3_prio[2*n + 1]) ||
+                    ((level3_prio[2*n] == level3_prio[2*n + 1]) &&
+                     (level3_id[2*n] != 0) &&
+                     ((level3_id[2*n + 1] == 0) ||
+                      (level3_id[2*n] < level3_id[2*n + 1])));
+                assign level4_prio[n] =
+                    left_wins ? level3_prio[2*n] : level3_prio[2*n + 1];
+                assign level4_id[n] =
+                    left_wins ? level3_id[2*n] : level3_id[2*n + 1];
+            end
+
+            wire root_left_wins =
+                (level4_prio[0] > level4_prio[1]) ||
+                ((level4_prio[0] == level4_prio[1]) &&
+                 (level4_id[0] != 0) &&
+                 ((level4_id[1] == 0) || (level4_id[0] < level4_id[1])));
+            assign max_prio =
+                root_left_wins ? level4_prio[0] : level4_prio[1];
+            assign best_id =
+                root_left_wins ? level4_id[0] : level4_id[1];
         end
     endgenerate
 

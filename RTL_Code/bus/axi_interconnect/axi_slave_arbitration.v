@@ -19,7 +19,7 @@ module arbiter_iwrr_1cycle
     localparam IDX_W    = (REQ_W > 1) ? $clog2(REQ_W) : 1;
 
     // Weight lookup
-    function [WEIGHT_W-1:0] get_weight;
+    function automatic [WEIGHT_W-1:0] get_weight;
         input integer idx;
         reg [31:0] weight_32;
         begin
@@ -91,7 +91,7 @@ module arbiter_iwrr_1cycle
     end
 
     // Sequential: update last_grant_idx and credits
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             last_grant_idx <= {IDX_W{1'b0}};
             for (i = 0; i < REQ_W; i = i + 1)
@@ -133,7 +133,31 @@ module sa_Ax_channel
     // Slave info configuration
     parameter                       SLV_ID              = 0,
     parameter                       SLV_ID_MSB_IDX      = 30,
-    parameter                       SLV_ID_LSB_IDX      = 30
+    parameter                       SLV_ID_LSB_IDX      = 30,
+    // -------------------------------------------------------------------------
+    // R4 - khong mang LOCK/CACHE/QOS/REGION qua FIFO cua tung master.
+    //
+    // top_soc.v:1063 noi CUNG bon truong nay bang hang so cho MOI master:
+    //   m_AWLOCK_i = 0, m_AWCACHE_i = 4'b0011, m_AWQOS_i = 0, m_AWREGION_i = 0
+    // = 13 bit hang so. (AxPROT 3 bit KHONG phai hang so - no la tin hieu that
+    // cua tung master, nen van di qua FIFO nhu cu.)
+    //
+    // FIFO nay sau OUTSTANDING_AMT, mot cai cho MOI master, MOI kenh (AW/AR),
+    // MOI slave: 4 x 4 x 2 x 7 x 13 bit = 2 912 flop hang so. Genus dep sach
+    // chung (13 912 flop bi xoa trong bay khoi slave_arbitration -
+    // reports/deleted_sequential_syn.rpt), nen DAT AXI_SIDEBAND_EN = 0 KHONG
+    // giam dien tich cuoi cung mot chut nao. Cai duoc la thoi gian elaborate /
+    // generic, peak memory, va mot netlist ma LEC/DFT ve sau doc duoc.
+    //
+    // Mac dinh 1 = mang day du nhu cu, nen moi ban instantiate khong khai bao gi
+    // giu nguyen hanh vi. Khi dat 0 thi bon truong duoc TAI TAO o dau ra tu bon
+    // parameter hang so ben duoi - gia tri o chan slave khong doi mot bit nao.
+    // -------------------------------------------------------------------------
+    parameter                       AXI_SIDEBAND_EN     = 1,
+    parameter [0:0]                 AXI_LOCK_CONST      = 1'b0,
+    parameter [3:0]                 AXI_CACHE_CONST     = 4'b0011,
+    parameter [3:0]                 AXI_QOS_CONST       = 4'b0000,
+    parameter [3:0]                 AXI_REGION_CONST    = 4'b0000
 )
 (
     // Input declaration
@@ -180,7 +204,10 @@ module sa_Ax_channel
     output                                  xDATA_fifo_order_wr_en_o
 );
     // Local parameters initialization
-    localparam ADDR_INFO_W  = DSP_ID_W + ADDR_WIDTH + TRANS_BURST_W + TRANS_DATA_LEN_W + TRANS_DATA_SIZE_W + 1 + 4 + 3 + 4 + 4; // +LOCK+CACHE+PROT+QOS+REGION
+    // R4 - 13 bit sideband hang so (LOCK 1 + CACHE 4 + QOS 4 + REGION 4) chi nam
+    // trong payload khi AXI_SIDEBAND_EN != 0. PROT (3 bit) LUON di qua.
+    localparam SB_W         = (AXI_SIDEBAND_EN != 0) ? (1 + 4 + 4 + 4) : 0;
+    localparam ADDR_INFO_W  = DSP_ID_W + ADDR_WIDTH + TRANS_BURST_W + TRANS_DATA_LEN_W + TRANS_DATA_SIZE_W + 3 + SB_W; // +PROT (+LOCK+CACHE+QOS+REGION khi bat)
     localparam AX_INFO_W    = TRANS_SLV_ID_W + ADDR_WIDTH + TRANS_BURST_W + TRANS_DATA_LEN_W + TRANS_DATA_SIZE_W + 1 + 4 + 3 + 4 + 4; // +LOCK+CACHE+PROT+QOS+REGION
     localparam ID_PAD_W     = TRANS_SLV_ID_W - MST_ID_W - DSP_ID_W;
     
@@ -326,7 +353,7 @@ module sa_Ax_channel
         .clk(ACLK_i),
         .rst_n(ARESETn_i),
         .req_i(arb_req),          
-        .req_weight_i(),
+        .req_weight_i(MST_WEIGHT),
         .num_grant_req_i(1'b1),
         .grant_ready_i(arb_grant_ready),  
         .grant_valid_o(arb_grant_valid)
@@ -374,7 +401,19 @@ module sa_Ax_channel
         // Dispatcher interface
         assign dsp_AxREADY_o[mst_idx] = ~(dsp_dispatcher_full_i[mst_idx] | fifo_addr_info_full[mst_idx]);
         // FIFO
-        assign ADDR_info[mst_idx] = {dsp_AxID_i[DSP_ID_W*(mst_idx+1)-1-:DSP_ID_W], dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH], dsp_AxBURST_i[TRANS_BURST_W*(mst_idx+1)-1-:TRANS_BURST_W], dsp_AxLEN_i[TRANS_DATA_LEN_W*(mst_idx+1)-1-:TRANS_DATA_LEN_W], dsp_AxSIZE_i[TRANS_DATA_SIZE_W*(mst_idx+1)-1-:TRANS_DATA_SIZE_W], dsp_AxLOCK_i[mst_idx], dsp_AxCACHE_i[4*(mst_idx+1)-1-:4], dsp_AxPROT_i[3*(mst_idx+1)-1-:3], dsp_AxQOS_i[4*(mst_idx+1)-1-:4], dsp_AxREGION_i[4*(mst_idx+1)-1-:4]};
+        // R4 - hai cach dong goi, khac nhau dung 13 bit sideband hang so.
+        if (AXI_SIDEBAND_EN != 0) begin : G_SIDEBAND_FULL
+            assign ADDR_info[mst_idx] = {dsp_AxID_i[DSP_ID_W*(mst_idx+1)-1-:DSP_ID_W], dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH], dsp_AxBURST_i[TRANS_BURST_W*(mst_idx+1)-1-:TRANS_BURST_W], dsp_AxLEN_i[TRANS_DATA_LEN_W*(mst_idx+1)-1-:TRANS_DATA_LEN_W], dsp_AxSIZE_i[TRANS_DATA_SIZE_W*(mst_idx+1)-1-:TRANS_DATA_SIZE_W], dsp_AxLOCK_i[mst_idx], dsp_AxCACHE_i[4*(mst_idx+1)-1-:4], dsp_AxPROT_i[3*(mst_idx+1)-1-:3], dsp_AxQOS_i[4*(mst_idx+1)-1-:4], dsp_AxREGION_i[4*(mst_idx+1)-1-:4]};
+            assign {AxID_valid[mst_idx], AxADDR_valid[mst_idx], AxBURST_valid[mst_idx], AxLEN_valid[mst_idx], AxSIZE_valid[mst_idx], AxLOCK_valid[mst_idx], AxCACHE_valid[mst_idx], AxPROT_valid[mst_idx], AxQOS_valid[mst_idx], AxREGION_valid[mst_idx]} = ADDR_info_valid[mst_idx];
+        end else begin : G_SIDEBAND_TIED
+            assign ADDR_info[mst_idx] = {dsp_AxID_i[DSP_ID_W*(mst_idx+1)-1-:DSP_ID_W], dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH], dsp_AxBURST_i[TRANS_BURST_W*(mst_idx+1)-1-:TRANS_BURST_W], dsp_AxLEN_i[TRANS_DATA_LEN_W*(mst_idx+1)-1-:TRANS_DATA_LEN_W], dsp_AxSIZE_i[TRANS_DATA_SIZE_W*(mst_idx+1)-1-:TRANS_DATA_SIZE_W], dsp_AxPROT_i[3*(mst_idx+1)-1-:3]};
+            assign {AxID_valid[mst_idx], AxADDR_valid[mst_idx], AxBURST_valid[mst_idx], AxLEN_valid[mst_idx], AxSIZE_valid[mst_idx], AxPROT_valid[mst_idx]} = ADDR_info_valid[mst_idx];
+            assign AxLOCK_valid[mst_idx]   = AXI_LOCK_CONST;
+            assign AxCACHE_valid[mst_idx]  = AXI_CACHE_CONST;
+            assign AxQOS_valid[mst_idx]    = AXI_QOS_CONST;
+            assign AxREGION_valid[mst_idx] = AXI_REGION_CONST;
+            wire _unused_sideband = &{1'b0, dsp_AxLOCK_i[mst_idx], dsp_AxCACHE_i[4*(mst_idx+1)-1-:4], dsp_AxQOS_i[4*(mst_idx+1)-1-:4], dsp_AxREGION_i[4*(mst_idx+1)-1-:4]};
+        end
         assign AxADDR_i[mst_idx] = dsp_AxADDR_i[ADDR_WIDTH*(mst_idx+1)-1-:ADDR_WIDTH];
         // The dispatcher already decoded the target slave using SLV_BASE_ADDR/SLV_ADDR_MASK.
         // Re-decoding here with fixed high address bits breaks non-contiguous maps such as
@@ -383,7 +422,6 @@ module sa_Ax_channel
         assign dsp_AxVALID_dec[mst_idx] = slv_addr_decoder[mst_idx] & dsp_AxVALID_i[mst_idx];
         assign dsp_handshake_occur[mst_idx] = dsp_AxVALID_dec[mst_idx] & dsp_AxREADY_o[mst_idx];
         assign fifo_addr_info_wr_en[mst_idx] = dsp_handshake_occur[mst_idx];
-        assign {AxID_valid[mst_idx], AxADDR_valid[mst_idx], AxBURST_valid[mst_idx], AxLEN_valid[mst_idx], AxSIZE_valid[mst_idx], AxLOCK_valid[mst_idx], AxCACHE_valid[mst_idx], AxPROT_valid[mst_idx], AxQOS_valid[mst_idx], AxREGION_valid[mst_idx]} = ADDR_info_valid[mst_idx];
         // ADDR mask controller
         assign rd_addr_info[mst_idx] = arb_grant_valid[mst_idx] & xADDR_channel_shift_en & AxVALID_o_nxt;
         assign fifo_addr_info_rd_en[mst_idx] = rd_addr_info[mst_idx] & (~msk_addr_crossing_flag[mst_idx] | msk_split_addr_sel[mst_idx]);
@@ -775,7 +813,21 @@ module sa_W_channel
     // Transaction configuration
     parameter                       DATA_WIDTH          = 32,
     parameter                       ADDR_WIDTH          = 32,
-    parameter                       TRANS_DATA_LEN_W    = 8                                 // Bus width of xLEN (AXI4: 8-bit, burst 1-256)
+    parameter                       TRANS_DATA_LEN_W    = 8,                                // Bus width of xLEN (AXI4: 8-bit, burst 1-256)
+    // T3 - do sau cua FIFO dem write-data, MOT bo cho MOI master.
+    //
+    // Truoc day hard-code 32.  Voi DATA_INFO_W = DATA_WIDTH + STRB_WIDTH = 36 va
+    // MST_AMT = 4 thi mot sa_W_channel ton 4*32*36 = 4608 flop, va no duoc nhan
+    // ban cho TUNG slave.  Trong ban tong hop 2026-09-08, nam sa_W_channel con
+    // song chiem ~11000 cell moi cai = 52% ca interconnect = 28% ca SoC.
+    //
+    // FIFO nay KHONG phai store-and-forward: no chi quyet dinh mot master duoc
+    // chay truoc bao nhieu beat TRUOC KHI AW cua no thang trong tai.  Backpressure
+    // la `dsp_WREADY_o = ~fifo_wdata_full`, con `AW_stall_o` bam vao FIFO order
+    // (do sau OUTSTANDING_AMT) chu KHONG bam vao FIFO nay - nen ha do sau khong
+    // the gay deadlock, chi lam master phai doi som hon.  Slave chi nhan ghi don
+    // nhip (APB, CLINT) khong can hon 2.
+    parameter                       W_FIFO_DEPTH        = 32
 )
 (
     // Input declaration
@@ -941,7 +993,7 @@ module sa_W_channel
             #(
                 .FIFO_TYPE(0),
                 .DATA_WIDTH(DATA_INFO_W),
-                .FIFO_DEPTH(32)
+                .FIFO_DEPTH(W_FIFO_DEPTH)
             ) fifo_wdata (
                 .clk(ACLK_i),
                 .rst_n(ARESETn_i),
@@ -1195,9 +1247,7 @@ module ai_slave_arbitration
     parameter                       DATA_WIDTH          = 32,
     parameter                       ADDR_WIDTH          = 32,
     parameter                       TRANS_MST_ID_W      = 5,                                // Bus width of original master transaction ID
-    parameter                       ROB_TAG_W           = $clog2(OUTSTANDING_AMT),
-    parameter                       ROB_ID_WIDTH        = ROB_TAG_W + TRANS_MST_ID_W,
-    parameter                       TRANS_SLV_ID_W      = ROB_ID_WIDTH + MST_ID_W,          // {master_id, rob_tag, original_id}
+    parameter                       TRANS_SLV_ID_W      = TRANS_MST_ID_W + MST_ID_W,        // {master_id, original_id}
     parameter                       TRANS_BURST_W       = 2,                                // Width of xBURST 
     parameter                       TRANS_DATA_LEN_W    = 8,                                // Bus width of xLEN (AXI4: 8-bit, burst 1-256)
     parameter                       TRANS_DATA_SIZE_W   = 3,                                // Bus width of xSIZE
@@ -1205,7 +1255,15 @@ module ai_slave_arbitration
     // Slave info configuration
     parameter                       SLV_ID              = 0,
     parameter                       SLV_ID_MSB_IDX      = 30,
-    parameter                       SLV_ID_LSB_IDX      = 30
+    parameter                       SLV_ID_LSB_IDX      = 30,
+    // T3 - do sau FIFO write-data rieng cho slave nay (xem sa_W_channel)
+    parameter                       W_FIFO_DEPTH        = 32,
+    // R4 - xem ghi chu trong sa_Ax_channel
+    parameter                       AXI_SIDEBAND_EN     = 1,
+    parameter [0:0]                 AXI_LOCK_CONST      = 1'b0,
+    parameter [3:0]                 AXI_CACHE_CONST     = 4'b0011,
+    parameter [3:0]                 AXI_QOS_CONST       = 4'b0000,
+    parameter [3:0]                 AXI_REGION_CONST    = 4'b0000
 )
 (
     // Input declaration
@@ -1235,7 +1293,7 @@ module ai_slave_arbitration
     // Write response channel
     input   [MST_AMT-1:0]                   dsp_BREADY_i,
     // Read address channel
-    input   [ROB_ID_WIDTH*MST_AMT-1:0]      dsp_ARID_i,
+    input   [TRANS_MST_ID_W*MST_AMT-1:0]    dsp_ARID_i,
     input   [ADDR_WIDTH*MST_AMT-1:0]        dsp_ARADDR_i,
     input   [TRANS_BURST_W*MST_AMT-1:0]     dsp_ARBURST_i,
     input   [TRANS_DATA_LEN_W*MST_AMT-1:0]  dsp_ARLEN_i,
@@ -1280,7 +1338,7 @@ module ai_slave_arbitration
     // Read address channel (master)
     output  [MST_AMT-1:0]                   dsp_ARREADY_o,
     // Read data channel (master)
-    output  [ROB_ID_WIDTH*MST_AMT-1:0]      dsp_RID_o,
+    output  [TRANS_MST_ID_W*MST_AMT-1:0]    dsp_RID_o,
     output  [DATA_WIDTH*MST_AMT-1:0]        dsp_RDATA_o,
     output  [TRANS_WR_RESP_W*MST_AMT-1:0]   dsp_RRESP_o,
     output  [MST_AMT-1:0]                   dsp_RLAST_o,
@@ -1346,6 +1404,11 @@ module ai_slave_arbitration
     // Write channel
     // Write Address channel
     sa_Ax_channel #(
+        .AXI_SIDEBAND_EN(AXI_SIDEBAND_EN),
+        .AXI_LOCK_CONST(AXI_LOCK_CONST),
+        .AXI_CACHE_CONST(AXI_CACHE_CONST),
+        .AXI_QOS_CONST(AXI_QOS_CONST),
+        .AXI_REGION_CONST(AXI_REGION_CONST),
         .MST_AMT(MST_AMT),
         .OUTSTANDING_AMT(OUTSTANDING_AMT),
         .MST_WEIGHT(MST_WEIGHT),
@@ -1405,7 +1468,8 @@ module ai_slave_arbitration
         .MST_ID_W(MST_ID_W),
         .DATA_WIDTH(DATA_WIDTH),
         .ADDR_WIDTH(ADDR_WIDTH),
-        .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W)
+        .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W),
+        .W_FIFO_DEPTH(W_FIFO_DEPTH)
     ) W_channel (
         // Input
         .ACLK_i(ACLK_i),
@@ -1456,6 +1520,11 @@ module ai_slave_arbitration
     // Read channel
     // Read Address channel
     sa_Ax_channel #(
+        .AXI_SIDEBAND_EN(AXI_SIDEBAND_EN),
+        .AXI_LOCK_CONST(AXI_LOCK_CONST),
+        .AXI_CACHE_CONST(AXI_CACHE_CONST),
+        .AXI_QOS_CONST(AXI_QOS_CONST),
+        .AXI_REGION_CONST(AXI_REGION_CONST),
         .MST_AMT(MST_AMT),
         .OUTSTANDING_AMT(OUTSTANDING_AMT),
         .MST_WEIGHT(MST_WEIGHT),
@@ -1463,7 +1532,7 @@ module ai_slave_arbitration
         .DATA_WIDTH(DATA_WIDTH),
         .ADDR_WIDTH(ADDR_WIDTH),
         .TRANS_MST_ID_W(TRANS_MST_ID_W),
-        .DSP_ID_W(ROB_ID_WIDTH),
+        .DSP_ID_W(TRANS_MST_ID_W),
         .TRANS_SLV_ID_W(TRANS_SLV_ID_W),
         .TRANS_BURST_W(TRANS_BURST_W),
         .TRANS_DATA_LEN_W(TRANS_DATA_LEN_W),
@@ -1517,7 +1586,7 @@ module ai_slave_arbitration
         .ADDR_WIDTH(ADDR_WIDTH),
         .TRANS_MST_ID_W(TRANS_MST_ID_W),
         .TRANS_SLV_ID_W(TRANS_SLV_ID_W),
-        .DSP_RID_W(ROB_ID_WIDTH)
+        .DSP_RID_W(TRANS_MST_ID_W)
     ) R_channel (
         .ACLK_i(ACLK_i),
         .ARESETn_i(ARESETn_i),
