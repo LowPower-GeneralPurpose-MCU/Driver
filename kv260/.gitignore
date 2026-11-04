@@ -7,3 +7,4 @@ out/
 *.jou
 *.log
 *.str
+dfx_runtime.txt
