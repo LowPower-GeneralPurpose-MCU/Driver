@@ -39,11 +39,29 @@
 #define PIN_AF2     2u
 #define PIN_AF3     3u
 
+/* pad: 0..31 (PAn). af: PIN_AF_GPIO / PIN_AF1..3. pad >= 32 bi bo qua. */
 static inline void pinmux_set(uint32_t pad, uint32_t af)
 {
+    if (pad > 31u) return;
     volatile uint32_t *reg = (pad < 16) ? &PINMUX_AFSEL0 : &PINMUX_AFSEL1;
     uint32_t sh = (pad & 15u) * 2u;
     *reg = (*reg & ~(3u << sh)) | ((af & 3u) << sh);
+}
+
+static inline uint32_t pinmux_get(uint32_t pad)
+{
+    if (pad > 31u) return PIN_AF_GPIO;
+    uint32_t v = (pad < 16) ? PINMUX_AFSEL0 : PINMUX_AFSEL1;
+    return (v >> ((pad & 15u) * 2u)) & 3u;
+}
+
+/* Dat cung mot AF cho moi pad co bit trong pad_mask (bit n = PAn). */
+static inline void pinmux_set_mask(uint32_t pad_mask, uint32_t af)
+{
+    uint32_t p;
+    for (p = 0; p < 32u; p++) {
+        if (pad_mask & (1u << p)) pinmux_set(p, af);
+    }
 }
 
 #endif /* PINMUX_H */

@@ -25,7 +25,11 @@
  * debugger bat/tat (dmactive), firmware khong tat duoc nua - ghi bit nay khong
  * co tac dung. Truoc day firmware xoa bit 6 la tu khoa JTAG. */
 #define SYSCON_CLK_DEBUG    6
-#define SYSCON_CLK_ASCON    7   // RTL: clk_gate_reg[7]
+#define SYSCON_CLK_ASCON    7   // RTL: clk_gate_reg[7] (TAT sau reset; o_active/psel van giu clock khi can)
+#define SYSCON_CLK_UART1    8   // RTL: clk_gate_reg[8]  (TAT sau reset)
+#define SYSCON_CLK_TIM0     9   // RTL: clk_gate_reg[9]  (TAT sau reset)
+#define SYSCON_CLK_TIM1     10  // RTL: clk_gate_reg[10] (TAT sau reset)
+#define SYSCON_CLK_MAX_BIT  10  // CLK_GATE_CTRL chi co [10:0]
 #define SYSCON_CLK_CPU      31
 
 /* RST_CAUSE - cac co cong don toi khi ghi 1 de xoa */

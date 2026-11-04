@@ -1,5 +1,30 @@
 # Build firmware
 
+## 0. 2026-11-04 — driver theo RTL mới, ảnh `.mem` CHƯA build lại
+
+Source đã đổi nhưng `my_soc_firmware_word.mem` vẫn là bản build 2026-09-12
+(source cũ, PLIC). Phải `make` lại trên máy có toolchain rồi chạy
+`run_soc_sim.sh fw` trước khi tin vào ảnh này. Máy Windows không build được:
+mọi bản gcc ở đó thiếu `cc1`.
+
+Đã đổi:
+
+- **Ngắt: PLIC → CLIC.** `main.c` bật chế độ CLIC (`mtvec = trap_entry | 3`),
+  UART0 RX qua CLIC ID 16. `trap.c` phân luồng theo `mcause[11:0]` = CLIC ID
+  (`inc/soc_hw.h`). `trap_entry` căn lề 64 byte (bắt buộc ở chế độ CLIC).
+  `plic.c` / `plic.h` đã xoá.
+- **Driver mới:** `clic.c`, `timer.c` (TIM0/TIM1), `ascon.c` / `ascon.h`
+  (ASCON-128 mã hoá, ASCON-Hash, TRNG); `pinmux.h` thêm `pinmux_get` /
+  `pinmux_set_mask`; UART1 (`HAL_UART_IRQDispatch`).
+- **Sửa theo RTL:** WDT sai offset (`CTRL` 0x04, `FEED` 0x08 + key
+  `0x5A5A5A5A`) nên trước đây không bao giờ bật được; GPIO `INT_STAT` ở 0x1C
+  (trước ghi nhầm vào `INT_TYPE`); SPI phải tự xoá `DONE` (sticky);
+  SYSCON có bit 8/9/10 (UART1/TIM0/TIM1); `SYSTEM_BUS_CLOCK` = 250 MHz.
+- **DMA giữ driver cũ** (`dma.c` / `dma.h` không đổi), mỗi kênh một CLIC ID 22–25.
+
+Chuỗi UART của test (`HELLO RISC-V UART TEST!\n`) giữ nguyên nên
+`tb_top_soc.v` không phải sửa.
+
 ## 1. Vì sao phải build lại
 
 `Driver/inc/soc_config.h` đã đổi `CONFIG_HAS_FPU` từ **1 → 0** ngày 2026-09-05.

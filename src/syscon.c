@@ -9,17 +9,15 @@
 // --------------------------------------------------------
 // Cấp xung nhịp cho một khối ngoại vi
 void syscon_enable_clock(uint8_t peripheral_bit) {
-    //if (peripheral_bit > 7) return;
-    SYSCON_CLK_GATE |= (1 << peripheral_bit);
-    
+    if (peripheral_bit > SYSCON_CLK_MAX_BIT) return;
+    SYSCON_CLK_GATE |= (1u << peripheral_bit);
 }
 
 // Hàm ngắt xung nhịp để tiết kiệm điện
 void syscon_disable_clock(uint8_t peripheral_bit) {
-    if (peripheral_bit > 7) return;
-    if (peripheral_bit == SYSCON_CLK_CPU) return;
-    
-    SYSCON_CLK_GATE &= ~(1 << peripheral_bit);
+    if (peripheral_bit > SYSCON_CLK_MAX_BIT) return;   // bit 31 (CPU) cung bi loai o day
+
+    SYSCON_CLK_GATE &= ~(1u << peripheral_bit);
 }
 // Hàm đổi địa chỉ Boot (dùng cho Bootloader nhảy sang vùng nhớ khác).
 // Co tac dung o lan warm reset KE TIEP (watchdog, syscon_system_reset,
@@ -54,30 +52,38 @@ void syscon_lock_debug(void) {
 // Chỉ gọi 1 lần duy nhất ở đầu hàm main()
 void syscon_init_clocks(void) {
     uint32_t clock_mask = 0;
-    // 1. Luôn cấp điện cho các khối Bắt buộc (Mandatory) 
-    clock_mask |= (1 << SYSCON_CLK_UART);
+    // 1. Luôn cấp điện cho các khối Bắt buộc (Mandatory)
+    clock_mask |= (1u << SYSCON_CLK_UART);
     // Khong con SYSCON_CLK_DEBUG: clock Debug Module do debugger tu bat (RTL
     // 2026-09-11), bit 6 chi doc.
 
     // 2. Cấp điện tự động cho các khối Tùy chọn (Optional)
     #if CONFIG_HAS_GPIO
-        clock_mask |= (1 << SYSCON_CLK_GPIO);
+        clock_mask |= (1u << SYSCON_CLK_GPIO);
     #endif
 
     #if CONFIG_HAS_TIMER
-        clock_mask |= (1 << SYSCON_CLK_TIMER);
+        clock_mask |= (1u << SYSCON_CLK_TIM0) | (1u << SYSCON_CLK_TIM1);
     #endif
 
     #if CONFIG_HAS_SPI
-        clock_mask |= (1 << SYSCON_CLK_SPI);
+        clock_mask |= (1u << SYSCON_CLK_SPI);
     #endif
 
     #if CONFIG_HAS_I2C
-        clock_mask |= (1 << SYSCON_CLK_I2C);
+        clock_mask |= (1u << SYSCON_CLK_I2C);
     #endif
 
-    #if CONFIG_HAS_ACCEL
-        clock_mask |= (1 << SYSCON_CLK_ACCEL);
+    #if CONFIG_HAS_ACCEL || CONFIG_HAS_CORDIC
+        clock_mask |= (1u << SYSCON_CLK_ACCEL);
+    #endif
+
+    #if CONFIG_HAS_UART1
+        clock_mask |= (1u << SYSCON_CLK_UART1);
+    #endif
+
+    #if CONFIG_HAS_ASCON
+        clock_mask |= (1u << SYSCON_CLK_ASCON);
     #endif
 
     // 3. Ghi 1 lần duy nhất xuống thanh ghi để bật đồng loạt

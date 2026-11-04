@@ -1,16 +1,29 @@
 /* ==================================================================
  * File: startup/trap_handler.S
  * Mô tả: Lưu và phục hồi Context khi có Ngắt/Lỗi (Exceptions & Interrupts)
+ *
+ * trap_entry la loi vao CHUNG cho moi ngoai le va moi ngat:
+ *   - che do CLINT (mtvec = trap_entry, mode 00, do crt0.S dat)
+ *   - che do CLIC  (mtvec = trap_entry | 3, do main.c dat; ngat shv = 0)
+ * O che do CLIC, core lay base = mtvec voi 6 bit thap ep ve 0 (register_file.v,
+ * WARL cua mtvec) - nen trap_entry PHAI can le 64 byte, neu khong core nhay
+ * vao giua mot ham khac.
  * ================================================================== */
 
+.section .text
+/* norelax: de .balign duoc dien ngay luc assemble (offset 0 trong section,
+   section can le 2^6). Voi relax, gas chen 60 byte NOP + R_RISCV_ALIGN va
+   phu thuoc linker cat bot - khong can dua vao do. */
+.option norelax
 .global trap_entry
-.align 4 /* Vector ngắt  phải căn lề 4 byte */
+.balign 64
 
 trap_entry:
-    /* 1. Xin cấp phát 128 byte (32 thanh ghi x 4 byte) trên đỉnh Stack hiện tại */
+    /* 1. Xin cấp phát 128 byte trên đỉnh Stack hiện tại (chỉ dùng 64 byte cho
+          16 thanh ghi caller-saved; s0-s11 do chính hàm C tự lưu nếu dùng) */
     addi sp, sp, -128
 
-    /* 2. Lưu toàn bộ 31 thanh ghi đa dụng (x1 đến x31) vào Stack (Bỏ qua x0 vì luôn bằng 0) */
+    /* 2. Lưu các thanh ghi caller-saved (ra, t0-t6, a0-a7) */
     sw ra, 0(sp)
     sw t0, 4(sp)
     sw t1, 8(sp)
@@ -33,7 +46,7 @@ trap_entry:
     csrr a1, mepc
     call system_trap_handler
 
-    /* 4. Phục hồi lại toàn bộ 31 thanh ghi từ Stack */
+    /* 4. Phục hồi lại các thanh ghi từ Stack */
     lw ra, 0(sp)
     lw t0, 4(sp)
     lw t1, 8(sp)
@@ -54,5 +67,6 @@ trap_entry:
     /* 5. Trả lại 128 byte cho Stack */
     addi sp, sp, 128
 
-    /* 6. Lệnh MRET: Yêu cầu phần cứng quay lại dòng code C đang chạy dở trước khi bị ngắt */
+    /* 6. MRET: quay lai lenh dang chay do. O che do CLIC, mret con khoi phuc
+          mintstatus.mil <- mcause.mpil. */
     mret
