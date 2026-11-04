@@ -1,0 +1,9 @@
+# Sinh ra khi chay - tao lai bang fw/Makefile, scripts/sim_core.sh, scripts/build.tcl
+fw/build/
+sim/work/
+vivado/
+out/
+.Xil/
+*.jou
+*.log
+*.str

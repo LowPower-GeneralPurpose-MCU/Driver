@@ -1,0 +1,36 @@
+// Device-tree overlay cho xmutil / fpga_manager tren KV260 (Ubuntu Kria).
+// Compile TREN BOARD:  dtc -@ -I dts -O dtb -o mcu_kv260.dtbo mcu_kv260.dtsi
+//
+//  fragment@0: nap mcu_kv260.bit.bin vao PL, giu reset PL0 (zynqmp_reset 116)
+//              trong luc nap.
+//  fragment@1: bat pl_clk0 (zynqmp_clk 71 = PL0_REF) o ~100 MHz - kv260_top
+//              dung no lam CLKIN cua MMCM. Khong co node nay Linux co the tat
+//              clock PL0 va SoC dung im.
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target = <&fpga_full>;
+        __overlay__ {
+            #address-cells = <2>;
+            #size-cells = <2>;
+            firmware-name = "mcu_kv260.bit.bin";
+            resets = <&zynqmp_reset 116>;
+        };
+    };
+
+    fragment@1 {
+        target = <&amba>;
+        __overlay__ {
+            mcu_kv260_clk0: mcu_kv260_clk0 {
+                compatible = "xlnx,fclk";
+                clocks = <&zynqmp_clk 71>;
+                clock-output-names = "mcu_kv260_pl0";
+                #clock-cells = <0>;
+                assigned-clocks = <&zynqmp_clk 71>;
+                assigned-clock-rates = <100000000>;
+            };
+        };
+    };
+};
