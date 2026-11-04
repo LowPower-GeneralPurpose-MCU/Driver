@@ -122,6 +122,10 @@ set_property include_dirs [concat [list $ROM_INC] $RTL_INCLUDE_DIRS] [get_filese
 # FPGA  : ram_style hint trong register_file / BPU.
 # XILINX: TRNG dung LUT6 (khong dung cell ASAP7 / mo hinh co tre).
 set_property verilog_define {FPGA XILINX} [get_filesets sources_1]
+# sim_1 KHONG ke thua include_dirs/define cua sources_1: thieu thi Vivado phan
+# tich sim_1 bao "undefined macro FPOP_ADD" (core/fpu_defines.vh) x179.
+set_property include_dirs   [get_property include_dirs   [get_filesets sources_1]] [get_filesets sim_1]
+set_property verilog_define [get_property verilog_define [get_filesets sources_1]] [get_filesets sim_1]
 
 # -----------------------------------------------------------------------------
 # 3. Block design: chi khoi PS, xuat pl_clk0 + pl_resetn0
