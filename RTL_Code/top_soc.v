@@ -1321,7 +1321,7 @@ module top_soc (
         
         // AXI Write Address Channel
         .s_axi_awid     (s5_awid), 
-        .s_axi_awaddr   (s5_awaddr), 
+        .s_axi_awaddr   ({16'b0, s5_awaddr[15:0]}),   // offset trong cua so 64 KB (regfile so 0xBFF8, khong phai 0x0200_BFF8)
         .s_axi_awlen    (s5_awlen), 
         .s_axi_awsize   (s5_awsize), 
         .s_axi_awburst  (s5_awburst), 
@@ -1348,7 +1348,7 @@ module top_soc (
         
         // AXI Read Address Channel
         .s_axi_arid     (s5_arid), 
-        .s_axi_araddr   (s5_araddr), 
+        .s_axi_araddr   ({16'b0, s5_araddr[15:0]}),   // nhu awaddr
         .s_axi_arlen    (s5_arlen), 
         .s_axi_arsize   (s5_arsize), 
         .s_axi_arburst  (s5_arburst), 
