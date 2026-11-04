@@ -11,7 +11,8 @@ Port FPGA cho SoC RISC-V golden (`Script_Backend/Asap7/run_workspace/mcu/genus/r
 |---|---|
 | Firmware bring-up (`fw/`) | Build OK bằng GCC của Vitis, 1.3 KB |
 | Mô phỏng `scripts/sim_core.sh` | **PASS**: UART TX giải mã đúng 115200, echo RX, GPIO PA2 out, PA3 in |
-| Build Vivado `scripts/build.tcl` | **Chưa chạy hết.** Đã chạy tới bước tạo block design PS (board preset KV260 áp xong, chưa có lỗi) thì tạm dừng theo yêu cầu. Synth, impl, timing và bitstream chưa kiểm |
+| Setup project `scripts/setup_project.tcl` | **Chạy OK** (batch, 2026-11-04): 92 file nguồn, top `kv260_top`, board `kv260_som` 1.4 + carrier 1.3, BD PS + wrapper, 0 ERROR, 0 CRITICAL WARNING |
+| Build Vivado `scripts/build.tcl` | Synth, impl, timing và bitstream **chưa chạy** |
 | Overlay `.dtsi` + `xmutil` | Chưa thử trên board |
 | Chân PMOD | 6/8 đã đối chiếu với board file; **H12 và B10 chưa đối chiếu** (xem mục 5) |
 
@@ -27,7 +28,9 @@ kv260/
   fw/                         firmware bring-up, bake thẳng vào boot ROM
   sim/tb_kv260_core.v         testbench mức chân
   scripts/sim_core.sh         XSim: RTL golden + glue + firmware
-  scripts/build.tcl           project + block design PS + synth/impl/bitstream + .bit.bin + .xsa
+  scripts/setup_project.tcl   tạo project + RTL + block design PS + constraint, DỪNG trước synth (dùng trong Tcl Console)
+  scripts/build.tcl           source setup_project.tcl rồi synth/impl/bitstream + .bit.bin + .xsa (batch)
+  vivado/                     (sinh ra) project mcu_kv260.xpr, tạo lại mỗi lần setup
   overlay/                    mcu_kv260.dtsi + shell.json cho xmutil
   out/                        (sinh ra) bitstream, xsa, reports/
 ```
@@ -115,7 +118,25 @@ Log đầy đủ ở `sim/work/xsim.log`. Testbench lấy danh sách RTL từ `g
 
 ### Bước 3 — Build bitstream
 
-Đóng các project Vivado khác nếu máy thiếu RAM (16 GB là vừa đủ), rồi chạy:
+Đóng các project Vivado khác nếu máy thiếu RAM (16 GB là vừa đủ). Có hai cách.
+
+**Cách A: Vivado GUI, tự bấm synth.** Mở Vivado 2025.1 (không cần mở project nào), rồi gõ vào Tcl Console (dùng dấu `/`):
+
+```tcl
+source D:/GITHUB_PROJECT/MCU_LowPower_GeneralPurpose/Driver/kv260/scripts/setup_project.tcl
+```
+
+Script làm những việc sau, mất khoảng 2–3 phút:
+- tạo `kv260/vivado/mcu_kv260.xpr` (xoá và tạo lại mỗi lần source);
+- gắn board KV260;
+- thêm RTL golden theo `rtl_filelist.tcl`, đổi `utils/clock_gate.v` sang `rtl/clock_gate_bufgce.v`, thêm 2 model SRAM và `kv260_soc_core.v`, `kv260_top.v`;
+- đặt include `fw/build/rom_inc` (ảnh firmware), define `FPGA XILINX`;
+- tạo block design PS (`pl_clk0` 100 MHz, `pl_resetn0`) và wrapper;
+- đặt top `kv260_top` và generic `SYS_CLK_MHZ`, thêm hai file XDC.
+
+Khi xong, script in khung "KV260 project san sang de synth". Lúc đó bấm **Flow → Run Synthesis**, hoặc gõ `launch_runs synth_1 -jobs 6`. Sau synth phải có 0 latch và 12 BUFGCE. Muốn đổi clock SoC thì gõ `set KV260_SYS_CLK_MHZ 75` trước lệnh `source` (firmware cũng phải build lại cho 75 MHz, xem bước 6). Nếu thiếu firmware, thiếu golden hoặc clock lệch, script báo `SETUP FAIL: ...` và dừng, không tạo project.
+
+**Cách B: batch, chạy hết tới bitstream:**
 
 ```bash
 cd /d/GITHUB_PROJECT/MCU_LowPower_GeneralPurpose/Driver/kv260 && /e/Xillinx/2025.1/Vivado/bin/vivado.bat -mode batch -nojournal -log out/build.log -source scripts/build.tcl
