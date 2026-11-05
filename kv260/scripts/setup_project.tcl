@@ -64,6 +64,18 @@ if {[expr {fmod(1200.0 / $SYS_CLK_MHZ * 8.0, 1.0)}] != 0.0} {
 
 puts "== KV260 setup: SoC $SYS_CLK_MHZ MHz, golden RTL $GOLDEN"
 
+# Project da co -> CHI MO, khong xoa (create_project -force xoa ca synth_1/impl_1).
+# Muon dung lai tu dau: `set KV260_RECREATE 1` truoc khi source.
+set xpr_file [file join $PROJ_DIR $PROJ_NAME.xpr]
+if {[file isfile $xpr_file] && [kv_env_or KV260_RECREATE 0] != 1} {
+    if {[llength [get_projects -quiet $PROJ_NAME]] == 0} {
+        open_project $xpr_file
+    }
+    puts "== Project da ton tai, chi MO (giu nguyen synth/impl): $xpr_file"
+    puts "   Muon xoa va tao lai: set KV260_RECREATE 1 ; source <script nay>"
+    return
+}
+
 # Dang mo dung project nay trong GUI thi dong lai truoc khi tao lai.
 if {[llength [get_projects -quiet $PROJ_NAME]] > 0} {
     close_project

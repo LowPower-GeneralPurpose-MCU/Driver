@@ -25,6 +25,7 @@ proc die {msg} {
     exit 1
 }
 set STOP_AFTER [expr {[llength $argv] > 0 ? [lindex $argv 0] : "bit"}]
+set ::KV260_RECREATE 1   ;# batch build luon dung lai project tu dau
 if {[catch {source [file join [file dirname [info script]] setup_project.tcl]} err]} {
     die $err
 }
